@@ -297,6 +297,12 @@ struct Line {
 };
 
 struct Screen {
+    static constexpr std::array<char, max_cols> blank_cells = [] {
+        std::array<char, max_cols> cells{};
+        cells.fill(' ');
+        return cells;
+    }();
+
     std::array<std::array<char, max_cols>, max_rows> previous = {};
     std::array<unsigned, max_rows> previous_length = {};
     std::array<Tone, max_rows> previous_tone = {};
@@ -338,7 +344,12 @@ struct Screen {
         const auto text = content.view();
         shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
         if (content.length < cols) {
-            PutStr("\233K");
+            if (tone == Tone::normal) {
+                PutStr("\233K");
+            } else {
+                shelltools::write_all(Output(), blank_cells.data(),
+                                      static_cast<LONG>(cols - content.length));
+            }
         }
         if (tone != Tone::normal) {
             PutStr("\2330m");
