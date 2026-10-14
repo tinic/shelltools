@@ -1464,6 +1464,11 @@ int watch_snapshots(LONG ticks, LONG count, bool machine);
 
 void handle_key(View &view, char key, bool &done) {
     if (view.confirming_break) {
+        if (view.rows < 14 || view.cols < 40) {
+            view.confirming_break = false;
+            view.message = "Break cancelled: window too small";
+            return;
+        }
         if (key == 'y' || key == 'Y') {
             const bool sent = !view.break_target_missing && break_selected(view.break_target);
             view.message = sent ? "Ctrl-C sent" : "Task changed or missing";
@@ -1576,7 +1581,9 @@ void handle_key(View &view, char key, bool &done) {
         view.selected = 0;
         view.scroll = 0;
     } else if (key == 'b' || key == 'B') {
-        if (view.shown) {
+        if (view.rows < 14 || view.cols < 40) {
+            view.message = "Resize window before break";
+        } else if (view.shown) {
             view.break_target = view.snapshot.rows[view.order[view.selected]];
             view.break_target_missing = false;
             view.confirming_break = true;

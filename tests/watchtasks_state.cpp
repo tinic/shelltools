@@ -181,6 +181,16 @@ int main() {
           std::string_view::npos);
     handle_key(view, '\r', done);
     CHECK(signal_calls == 1 && forbid_depth == 0);
+    // A hidden prompt must not turn a later Y into a blind confirmation.
+    view.rows = 13;
+    handle_key(view, 'b', done);
+    CHECK(!view.confirming_break && signal_calls == 1);
+    view.rows = 14;
+    handle_key(view, 'b', done);
+    CHECK(view.confirming_break);
+    view.cols = 39;
+    handle_key(view, 'Y', done);
+    CHECK(!view.confirming_break && signal_calls == 1);
     SysBase = saved;
     std::puts("PASS: stable selection, explicit confirmation, cancellation, pinned target, "
               "missing/renamed task, 40x14 prompt");
