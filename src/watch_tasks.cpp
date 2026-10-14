@@ -3,6 +3,7 @@
 #include "tool_support.hpp"
 
 #include <dos/dosextens.h>
+#include <exec/execbase.h>
 #include <exec/interrupts.h>
 #include <exec/memory.h>
 #include <exec/nodes.h>
@@ -1334,6 +1335,8 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
     return shelltools::ok;
 }
 
+constexpr char version_tag[] = SHELLTOOLS_VERSTAG("WatchTasks");
+
 [[gnu::noinline, gnu::noipa]] int watch_main() {
     LONG args[6] = {};
     RDArgs *rd = ReadArgs("TICKS/N/K,COUNT/N/K,ROWS/N/K,COLS/N/K,MACHINE/S,HELP/S", args, nullptr);
@@ -1341,7 +1344,7 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
         return shelltools::dos_error("WatchTasks");
     }
     if (args[5]) {
-        shelltools::help(
+        shelltools::help(version_tag,
             "PURPOSE: Live task CPU and memory monitor\n"
             "USAGE: WatchTasks [TICKS=<n>] [COUNT=<n>] [ROWS=<n>] [COLS=<n>] [MACHINE]\n"
             "DEFAULT: 50 ticks, unlimited, auto console size\n"

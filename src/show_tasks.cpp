@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <span>
 
+namespace {
+constexpr char version_tag[] = SHELLTOOLS_VERSTAG("ShowTasks");
+}
+
 int main() {
     shelltools::arm_break();
     LONG args[5] = {};
@@ -16,7 +20,7 @@ int main() {
         return shelltools::dos_error("ShowTasks");
     }
     if (args[4]) {
-        shelltools::help("PURPOSE: List Exec tasks and AmigaDOS processes\n"
+        shelltools::help(version_tag, "PURPOSE: List Exec tasks and AmigaDOS processes\n"
                          "USAGE: ShowTasks [TASK=<hex> | CLI=<number>] [DETAIL] [MACHINE]\n"
                          "DEFAULT: Aligned task table; P=process T=task\n"
                          "TASK/CLI: Select one task; CLI must be positive\n"

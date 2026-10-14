@@ -30,6 +30,10 @@ def main():
     for name in names:
         result = run(name, "HELP")
         check(result.returncode, 0, f"{name} HELP rc")
+        if not result.stdout.startswith(f"{name} "):
+            raise AssertionError(f"{name} HELP has no version line: {result.stdout!r}")
+        if f"$VER: {name} ".encode() not in (args.bin_dir / name).read_bytes():
+            raise AssertionError(f"{name} has no $VER: tag")
         if "PURPOSE:" not in result.stdout or "USAGE:" not in result.stdout:
             raise AssertionError(f"{name} HELP incomplete: {result.stdout!r}")
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(shelltools LANGUAGES CXX)
+project(shelltools VERSION 1.0 LANGUAGES CXX)
 
 if(NOT CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR "Configure with cmake/toolchain-m68k-amigaos.cmake")
@@ -38,6 +38,26 @@ else()
     message(FATAL_ERROR "SHELLTOOLS_CPU must be 68000 or 68020-60")
 endif()
 
+set(SHELLTOOLS_VERSION_SUFFIX "" CACHE STRING
+    "Text appended to each command's $VER: tag, such as a distribution's marker")
+if(SHELLTOOLS_VERSION_SUFFIX MATCHES "[\"\\\n]")
+    message(FATAL_ERROR "SHELLTOOLS_VERSION_SUFFIX must not contain quotes, backslashes or newlines")
+endif()
+
+# The $VER: date is the source commit's, as d.m.yyyy; none outside a checkout.
+set(_version_date "")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" -C "${CMAKE_SOURCE_DIR}" log -1 --format=%cd --date=format:%d.%m.%Y
+        OUTPUT_VARIABLE _commit_date OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _commit_date_rc ERROR_QUIET)
+    if(_commit_date_rc EQUAL 0 AND _commit_date MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+        string(REGEX REPLACE "(^|\\.)0" "\\1" _commit_date "${_commit_date}")
+        set(_version_date " (${_commit_date})")
+    endif()
+endif()
+
 function(shelltool name)
     add_executable(${name} ${ARGN})
     target_compile_options(${name} PRIVATE
@@ -49,6 +69,10 @@ function(shelltool name)
         ${_cpu_flag} -mcrt=nix20 -Os ${_lto_flags}
         -fno-rtti -fno-exceptions
         -Wl,--gc-sections)
+    target_compile_definitions(${name} PRIVATE
+        SHELLTOOLS_VERSION="${PROJECT_VERSION}"
+        SHELLTOOLS_VERSION_DATE="${_version_date}"
+        SHELLTOOLS_VERSION_SUFFIX="${SHELLTOOLS_VERSION_SUFFIX}")
     set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/C")
     install(TARGETS ${name} RUNTIME DESTINATION C)
 endfunction()
