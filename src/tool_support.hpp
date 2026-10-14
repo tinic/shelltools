@@ -26,18 +26,6 @@ inline int break_result(const char *command) {
     return warn;
 }
 
-inline bool wait_for_input(BPTR file) {
-    if (!IsInteractive(file)) {
-        return !break_requested();
-    }
-    while (!WaitForChar(file, 100000)) {
-        if (break_requested()) {
-            return false;
-        }
-    }
-    return !break_requested();
-}
-
 constexpr bool parse_task_id(std::string_view text, ULONG &address) {
     if (text.starts_with('$')) {
         text.remove_prefix(1);

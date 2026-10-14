@@ -19,11 +19,6 @@ else()
         "AmigaPorts toolchain root")
 endif()
 
-set(_cc "${_bin}/m68k-amigaos-gcc")
-if(NOT EXISTS "${_cc}")
-    message(FATAL_ERROR "No m68k-amigaos-gcc at ${_cc}")
-endif()
-
 if(NOT EXISTS "${_cxx}")
     message(FATAL_ERROR "No m68k-amigaos-c++ at ${_cxx}")
 endif()
@@ -43,7 +38,6 @@ if(NOT _release OR CMAKE_MATCH_1 LESS 16 OR
 endif()
 
 set(CMAKE_CXX_COMPILER "${_cxx}")
-set(CMAKE_C_COMPILER "${_cc}")
 set(CMAKE_AR "${_bin}/m68k-amigaos-gcc-ar" CACHE FILEPATH "")
 set(CMAKE_RANLIB "${_bin}/m68k-amigaos-gcc-ranlib" CACHE FILEPATH "")
 set(CMAKE_NM "${_bin}/m68k-amigaos-gcc-nm" CACHE FILEPATH "")
