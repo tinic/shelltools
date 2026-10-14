@@ -152,6 +152,7 @@ struct View {
     unsigned shown = 0;
     unsigned selected = 0;
     unsigned scroll = 0;
+    unsigned help_scroll = 0;
     unsigned rows = 24;
     unsigned cols = 80;
     std::array<char, 32> filter = {};
@@ -171,6 +172,52 @@ struct View {
 constexpr unsigned max_rows = 100;
 constexpr unsigned max_cols = 160;
 constexpr unsigned task_page_rows(unsigned rows) { return rows >= 14 ? rows - 9 : 1; }
+constexpr unsigned help_page_rows(unsigned rows) { return rows >= 14 ? rows - 3 : 1; }
+
+struct HelpRow {
+    std::string_view left;
+    std::string_view right;
+    bool section = false;
+};
+
+constexpr std::array wide_help = {
+    HelpRow{" MOVE / SELECT", " SORT", true},
+    HelpRow{"  j/k, Up/Down   One row", "  t  CPU       p  Priority", false},
+    HelpRow{"  n/u           One page", "  s  State     c  CLI    a  Name", false},
+    HelpRow{"", "", false},
+    HelpRow{" FILTER", " ACTIONS", true},
+    HelpRow{"  /             Filter name/command", "  Space  Pause / resume", false},
+    HelpRow{"  Backspace     Delete", "  b      Send Ctrl-C", false},
+    HelpRow{"  Enter / Esc   Finish", "  h      Close help    q  Quit", false},
+    HelpRow{"", "", false},
+    HelpRow{" TABLE", " CPU", true},
+    HelpRow{"  T  Exec task  P  DOS process", "  CPU%  VBlank sample estimate", false},
+    HelpRow{"  TASK_ID  Exec address", "  --    Fewer than 10 samples", false},
+};
+
+constexpr std::array narrow_help = {
+    HelpRow{" MOVE / SELECT", "", true},
+    HelpRow{"  j/k, arrows    One row", "", false},
+    HelpRow{"  n/u            One page", "", false},
+    HelpRow{" SORT", "", true},
+    HelpRow{"  t CPU  p Priority  s State", "", false},
+    HelpRow{"  c CLI  a Name", "", false},
+    HelpRow{" FILTER", "", true},
+    HelpRow{"  / Filter name/command", "", false},
+    HelpRow{"  Backspace Del  Enter/Esc Done", "", false},
+    HelpRow{" ACTIONS", "", true},
+    HelpRow{"  Space Pause   b Ctrl-C", "", false},
+    HelpRow{"  h Close help  q Quit", "", false},
+    HelpRow{" TABLE / CPU", "", true},
+    HelpRow{"  T Exec task  P DOS process", "", false},
+    HelpRow{"  CPU% VBlank; -- warming up", "", false},
+};
+
+constexpr unsigned help_count(unsigned cols) {
+    return static_cast<unsigned>(cols >= 80 ? wide_help.size() : narrow_help.size());
+}
+
+enum class Tone : UBYTE { normal, accent, positive, warm, warning, banner };
 
 struct Line {
     std::array<char, max_cols> data = {};
@@ -252,7 +299,7 @@ struct Line {
 struct Screen {
     std::array<std::array<char, max_cols>, max_rows> previous = {};
     std::array<unsigned, max_rows> previous_length = {};
-    std::array<bool, max_rows> selected = {};
+    std::array<Tone, max_rows> previous_tone = {};
     std::array<bool, max_rows> valid = {};
     unsigned rows = 0;
     unsigned cols = 0;
@@ -267,33 +314,38 @@ struct Screen {
         PutStr("\2330m\233 p\233H\233J");
     }
 
-    void line(unsigned row, const Line &content, bool highlight = false) {
+    void line(unsigned row, const Line &content, Tone tone = Tone::normal) {
         if (row == 0 || row > rows) {
             return;
         }
         const unsigned index = row - 1;
         const bool same =
-            valid[index] && selected[index] == highlight &&
+            valid[index] && previous_tone[index] == tone &&
             previous_length[index] == content.length &&
             std::ranges::equal(content.view(), std::span{previous[index].data(), content.length});
         if (same) {
             return;
         }
         Printf("\233%lu;1H", static_cast<ULONG>(row));
-        if (highlight) {
-            PutStr("\2337m");
+        switch (tone) {
+        case Tone::normal: break;
+        case Tone::accent: PutStr("\23331;42m"); break;
+        case Tone::positive: PutStr("\23331;45m"); break;
+        case Tone::warm: PutStr("\23331;47m"); break;
+        case Tone::warning: PutStr("\23331;44m"); break;
+        case Tone::banner: PutStr("\23331;43m"); break;
         }
         const auto text = content.view();
         shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
         if (content.length < cols) {
             PutStr("\233K");
         }
-        if (highlight) {
+        if (tone != Tone::normal) {
             PutStr("\2330m");
         }
         std::ranges::copy(content.view(), previous[index].begin());
         previous_length[index] = content.length;
-        selected[index] = highlight;
+        previous_tone[index] = tone;
         valid[index] = true;
     }
 };
@@ -407,6 +459,49 @@ bool break_selected(const TaskRow &row) {
     return sent;
 }
 
+void render_help(View &view, Screen &screen) {
+    const unsigned page = help_page_rows(view.rows);
+    const unsigned count = help_count(view.cols);
+    view.help_scroll = std::min(view.help_scroll, count > page ? count - page : 0);
+
+    Line title(view.cols, true);
+    title.text("WatchTasks  HELP  ");
+    title.decimal(view.help_scroll + 1);
+    title.character('-');
+    title.decimal(std::min(count, view.help_scroll + page));
+    title.character('/');
+    title.decimal(count);
+    title.spaces(title.limit - title.length);
+    screen.line(1, title, Tone::banner);
+    screen.line(2, Line(view.cols));
+
+    for (unsigned i = 0; i < page; ++i) {
+        const unsigned index = view.help_scroll + i;
+        if (index >= count) {
+            screen.line(3 + i, Line(view.cols));
+            continue;
+        }
+        const HelpRow &entry = view.cols >= 80 ? wide_help[index] : narrow_help[index];
+        Line line(view.cols, entry.section);
+        if (view.cols >= 80) {
+            line.field(entry.left, view.cols / 2);
+            line.text(entry.right);
+        } else {
+            line.text(entry.left);
+        }
+        if (entry.section) {
+            line.spaces(line.limit - line.length);
+        }
+        screen.line(3 + i, line, entry.section ? Tone::banner : Tone::normal);
+    }
+
+    Line footer(view.cols, true);
+    footer.text(" j/k scroll  n/u page  h back  q quit");
+    footer.spaces(footer.limit - footer.length);
+    screen.line(view.rows, footer, Tone::banner);
+    Flush(Output());
+}
+
 void render(View &view, Screen &screen, LONG number) {
     screen.size(view.rows, view.cols);
     if (view.rows < 14 || view.cols < 40) {
@@ -414,6 +509,10 @@ void render(View &view, Screen &screen, LONG number) {
         line.text("WatchTasks: resize window (40x14 minimum)");
         screen.line(1, line);
         Flush(Output());
+        return;
+    }
+    if (view.help) {
+        render_help(view, screen);
         return;
     }
     prepare(view);
@@ -442,13 +541,13 @@ void render(View &view, Screen &screen, LONG number) {
         title.text("  TRUNCATED");
     }
     title.spaces(title.limit - title.length);
-    screen.line(1, title, true);
+    screen.line(1, title, Tone::banner);
     Line chip(view.cols);
     memory_bar(chip, "CHIP", view.chip_free, view.chip_total);
-    screen.line(2, chip);
+    screen.line(2, chip, Tone::positive);
     Line fast(view.cols);
     memory_bar(fast, "FAST", view.fast_free, view.fast_total);
-    screen.line(3, fast);
+    screen.line(3, fast, Tone::accent);
     Line status(view.cols);
     status.text("RUN ");
     status.decimal(running);
@@ -467,7 +566,7 @@ void render(View &view, Screen &screen, LONG number) {
     }
     status.text("  SAMPLES ");
     status.decimal(view.cpu.samples);
-    screen.line(4, status);
+    screen.line(4, status, view.paused ? Tone::warning : Tone::normal);
     Line rule(view.cols);
     rule.text("-- Filter: ");
     const std::string_view filter{view.filter.data()};
@@ -477,7 +576,12 @@ void render(View &view, Screen &screen, LONG number) {
         std::min<std::size_t>(room, (view.editing ? 1U : 0U) +
                                       (message.empty() ? 0U : message.size() + 2)));
     const unsigned filter_room = room - reserved;
-    rule.text(filter.substr(filter.size() > filter_room ? filter.size() - filter_room : 0));
+    std::string_view shown_filter = filter;
+    if (shown_filter.size() > filter_room) {
+        // substr() pulls in libstdc++'s exception runtime on this toolchain.
+        shown_filter.remove_prefix(shown_filter.size() - filter_room);
+    }
+    rule.text(shown_filter);
     if (view.editing) {
         rule.character('_');
     } else if (!message.empty()) {
@@ -490,8 +594,9 @@ void render(View &view, Screen &screen, LONG number) {
     while (rule.length < rule.limit) {
         rule.character('-');
     }
-    screen.line(5, rule);
+    screen.line(5, rule, view.editing ? Tone::positive : Tone::warm);
     Line headings(view.cols);
+    const unsigned page = task_page_rows(view.rows);
     const bool compact = view.cols < 60;
     headings.spaces(2);
     headings.text("T/P ");
@@ -510,61 +615,40 @@ void render(View &view, Screen &screen, LONG number) {
         headings.character(' ');
     }
     headings.text("NAME");
-    screen.line(6, headings);
+    screen.line(6, headings, Tone::accent);
 
-    const unsigned page = task_page_rows(view.rows);
-    if (view.help) {
-        static constexpr std::array help = {
-            "T/P  Exec task (thread) / DOS process",
-            "j/k or arrows  select; n/u page down/up",
-            "t/p/s/c/a  sort CPU/priority/state/CLI/name",
-            "/  filter name or command; Enter accepts",
-            "b  send Ctrl-C to selected task",
-            "Space  pause/resume snapshots",
-            "CPU%  VBlank sample estimate; -- means few samples",
-            "h  close help; q  quit",
-        };
-        for (unsigned i = 0; i < page; ++i) {
-            Line line(view.cols);
-            if (i < help.size()) {
-                line.text(help[i]);
-            }
+    for (unsigned i = 0; i < page; ++i) {
+        const unsigned pos = view.scroll + i;
+        Line line(view.cols, true);
+        if (pos >= view.shown) {
+            line.spaces(line.limit);
             screen.line(7 + i, line);
+            continue;
         }
-    } else {
-        for (unsigned i = 0; i < page; ++i) {
-            const unsigned pos = view.scroll + i;
-            Line line(view.cols, true);
-            if (pos >= view.shown) {
-                line.spaces(line.limit);
-                screen.line(7 + i, line);
-                continue;
-            }
-            const unsigned task_index = view.order[pos];
-            const TaskRow &row = view.snapshot.rows[task_index];
-            line.character(pos == view.selected ? '>' : ' ');
+        const unsigned task_index = view.order[pos];
+        const TaskRow &row = view.snapshot.rows[task_index];
+        line.character(pos == view.selected ? '>' : ' ');
+        line.character(' ');
+        line.character(' ');
+        line.character(row.type == NT_PROCESS ? 'P' : 'T');
+        line.spaces(2);
+        if (!compact) {
+            line.hex8(row.address);
             line.character(' ');
+            line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
             line.character(' ');
-            line.character(row.type == NT_PROCESS ? 'P' : 'T');
-            line.spaces(2);
-            if (!compact) {
-                line.hex8(row.address);
-                line.character(' ');
-                line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
-                line.character(' ');
-                line.signed_decimal(row.priority, 4);
-                line.character(' ');
-            }
-            cpu_field(line, view.cpu.tenths[task_index], view.cpu.samples);
+            line.signed_decimal(row.priority, 4);
             line.character(' ');
-            if (!compact) {
-                line.field(shelltools::task_state(row.state), 5);
-                line.character(' ');
-            }
-            line.text(row.name.data());
-            line.spaces(line.limit - line.length);
-            screen.line(7 + i, line, pos == view.selected);
         }
+        cpu_field(line, view.cpu.tenths[task_index], view.cpu.samples);
+        line.character(' ');
+        if (!compact) {
+            line.field(shelltools::task_state(row.state), 5);
+            line.character(' ');
+        }
+        line.text(row.name.data());
+        line.spaces(line.limit - line.length);
+        screen.line(7 + i, line, pos == view.selected ? Tone::banner : Tone::normal);
     }
     Line detail(view.cols);
     Line signals(view.cols);
@@ -777,10 +861,31 @@ void handle_key(View &view, char key, bool &done) {
         view.scroll = 0;
         return;
     }
+    if (view.help) {
+        const unsigned page = help_page_rows(view.rows);
+        const unsigned count = help_count(view.cols);
+        const unsigned end = count > page ? count - page : 0;
+        view.help_scroll = std::min(view.help_scroll, end);
+        if (key == 'q' || key == 'Q') {
+            done = true;
+        } else if (key == 'h' || key == 'H' || key == '?' || key == 27) {
+            view.help = false;
+        } else if (key == 'j' && view.help_scroll < end) {
+            ++view.help_scroll;
+        } else if (key == 'k' && view.help_scroll) {
+            --view.help_scroll;
+        } else if (key == 'n') {
+            view.help_scroll += std::min(page, end - view.help_scroll);
+        } else if (key == 'u') {
+            view.help_scroll -= std::min(page, view.help_scroll);
+        }
+        return;
+    }
     if (key == 'q' || key == 'Q') {
         done = true;
     } else if (key == 'h' || key == 'H' || key == '?') {
-        view.help = !view.help;
+        view.help = true;
+        view.help_scroll = 0;
     } else if (key == ' ') {
         view.paused = !view.paused;
     } else if (key == '/') {
