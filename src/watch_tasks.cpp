@@ -890,9 +890,7 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
     return shelltools::ok;
 }
 
-} // namespace
-
-int main() {
+[[gnu::noinline, gnu::noipa]] int watch_main() {
     LONG args[6] = {};
     RDArgs *rd = ReadArgs("TICKS/N/K,COUNT/N/K,ROWS/N/K,COLS/N/K,MACHINE/S,HELP/S", args, nullptr);
     if (rd == nullptr) {
@@ -928,4 +926,32 @@ int main() {
                                  static_cast<unsigned>(cols));
     }
     return watch_snapshots(ticks, count, machine);
+}
+
+constexpr ULONG private_stack_size = 16UL * 1024UL;
+StackSwapStruct private_stack_swap = {};
+int private_stack_result = shelltools::error;
+
+// Keep this frame free of locals: it spans both StackSwap calls.
+[[gnu::noinline, gnu::noipa]] void watch_trampoline() {
+    StackSwap(&private_stack_swap);
+    private_stack_result = watch_main();
+    StackSwap(&private_stack_swap);
+}
+
+} // namespace
+
+int main() {
+    APTR stack = AllocMem(private_stack_size, MEMF_ANY);
+    if (!stack) {
+        PutStr("WatchTasks: no memory for private stack\n");
+        return shelltools::error;
+    }
+    UBYTE *upper = static_cast<UBYTE *>(stack) + private_stack_size;
+    private_stack_swap.stk_Lower = stack;
+    private_stack_swap.stk_Upper = reinterpret_cast<ULONG>(upper);
+    private_stack_swap.stk_Pointer = upper;
+    watch_trampoline();
+    FreeMem(stack, private_stack_size);
+    return private_stack_result;
 }
