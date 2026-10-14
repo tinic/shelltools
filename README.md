@@ -13,7 +13,6 @@ Small AmigaOS 68k Shell commands for observing and controlling a machine. Comman
 | FirstLines | First lines of a file or input stream | FILE, LINES |
 | LastLines | Last lines of a seekable file | FILE, LINES |
 | FindText | Literal line search | TEXT, FILE, NOCASE, NUMBER, INVERT, COUNT |
-| RebootSync | Invoke AmigaOS 3.2 C:Reboot SYNC | HELP |
 
 Run Command HELP for exact syntax and return codes. No Unix aliases are installed.
 
@@ -27,7 +26,7 @@ WatchTasks allocates a private 16 KB stack and switches back to the caller's sta
 
 For disk capacity, use AmigaDOS `INFO` to list disks or `INFO DH0:` to select one. The A3000's installed `INFO ?` template accepts only `DEVICE`; it has no unit selector. Newer AmigaOS versions document [additional INFO options](https://wiki.amigaos.net/wiki/AmigaOS_Manual%3A_AmigaDOS_Command_Reference#INFO).
 
-SystemInfo opens identify.library at runtime and reports system, CPU, FPU, MMU, OS, chipset, clock, graphics, and audio when installed. It falls back to Exec version and Chip/Fast free memory without the library. Install a current identify.library in LIBS: for the full report. RebootSync uses the OS 3.2 Reboot SYNC command, which attempts to inhibit partitions before reboot. It rejects older Exec versions.
+SystemInfo opens identify.library at runtime and reports system, CPU, FPU, MMU, OS, chipset, clock, graphics, and audio when installed. It falls back to Exec version and Chip/Fast free memory without the library. Install a current identify.library in LIBS: for the full report.
 
 ## Build
 
@@ -65,4 +64,4 @@ For memory checks, AmiNetXDuo's `tools/enforcer-run.sh -m` boots an isolated 680
 
 ## Prior art
 
-[Scout 3.6](https://www.aminet.net/util/moni/Scout_os3.readme) already covers a much broader system monitor, including task details, signals, and hardware inventory. It is a useful reference for field selection; this project focuses on small Shell commands and structured output. [identify.library](https://github.com/shred/identify) provides the optional hardware detection. [AmigaOS 3.2 Reboot SYNC](https://wiki.amigaos.net/wiki/AmigaOS_Manual:_AmigaDOS_Command_Reference) supplies the filesystem-aware reboot operation. AmiNet also has older top, ps, headtail, and grep packages; AmigaOS itself includes STATUS, BREAK, SEARCH, INFO, and AVAIL. On GitHub, [amimcp](https://github.com/thomas-luebker/amimcp) and [AmigaAI](https://github.com/murinsel/AmigaAI) provide model-to-machine bridges. These commands can run inside such a bridge and return compact, structured observations.
+[Scout 3.6](https://www.aminet.net/util/moni/Scout_os3.readme) already covers a much broader system monitor, including task details, signals, and hardware inventory. It is a useful reference for field selection; this project focuses on small Shell commands and structured output. [identify.library](https://github.com/shred/identify) provides the optional hardware detection. AmiNet also has older top, ps, headtail, and grep packages; AmigaOS itself includes STATUS, BREAK, SEARCH, INFO, and AVAIL. On GitHub, [amimcp](https://github.com/thomas-luebker/amimcp) and [AmigaAI](https://github.com/murinsel/AmigaAI) provide model-to-machine bridges. These commands can run inside such a bridge and return compact, structured observations.

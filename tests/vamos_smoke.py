@@ -32,7 +32,7 @@ def main():
                 capture_output=True, text=True, timeout=15, check=False)
 
         names = ("ShowTasks", "WatchTasks", "BreakTask", "FirstLines",
-                 "LastLines", "FindText", "SystemInfo", "RebootSync")
+                 "LastLines", "FindText", "SystemInfo")
         for name in names:
             result = run(name, "HELP")
             check(result.returncode, 0, f"{name} HELP rc")
@@ -84,7 +84,7 @@ def main():
         result = run("BreakTask", "TASK=FFFFFFFF", "NAME=absent")
         check(result.returncode, 5, "BreakTask missing task rc")
 
-    print("amiga-smoke: 8 commands passed")
+    print("amiga-smoke: 7 commands passed")
 
 
 if __name__ == "__main__":

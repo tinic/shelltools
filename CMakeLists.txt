@@ -60,7 +60,6 @@ shelltool(FirstLines src/first_lines.cpp)
 shelltool(LastLines src/last_lines.cpp)
 shelltool(FindText src/find_text.cpp)
 shelltool(SystemInfo src/system_info.cpp)
-shelltool(RebootSync src/reboot_sync.cpp)
 
 if(SHELLTOOLS_ANALYZE)
     find_program(CPPCHECK_EXECUTABLE cppcheck REQUIRED)
