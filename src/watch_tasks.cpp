@@ -140,9 +140,14 @@ constexpr bool contains(std::string_view text, std::string_view part) {
     return std::ranges::search(text, part, equal).begin() != text.end();
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Weffc++"
 struct View {
+    // Static storage zero-initializes these large buffers without file data.
+    // cppcheck-suppress uninitMemberVarNoCtor
     TaskSnapshot snapshot;
     CpuUsage cpu;
+    // cppcheck-suppress uninitMemberVarNoCtor
     std::array<unsigned, TaskSnapshot::capacity> order;
     unsigned shown = 0;
     unsigned selected = 0;
@@ -161,6 +166,7 @@ struct View {
     ULONG fast_free = 0;
     ULONG fast_total = 0;
 };
+#pragma GCC diagnostic pop
 
 constexpr unsigned max_rows = 100;
 constexpr unsigned max_cols = 160;
@@ -180,7 +186,8 @@ struct Line {
         }
     }
     constexpr void text(std::string_view s) {
-        for (const unsigned char c : s) {
+        for (const char byte : s) {
+            const auto c = static_cast<unsigned char>(byte);
             character(c < 0x20 || (c >= 0x7f && c < 0xa0) ? '?' : static_cast<char>(c));
         }
     }
@@ -191,7 +198,8 @@ struct Line {
     }
     constexpr void field(std::string_view s, unsigned width) {
         unsigned n = 0;
-        for (const unsigned char c : s) {
+        for (const char byte : s) {
+            const auto c = static_cast<unsigned char>(byte);
             if (n == width) {
                 break;
             }
@@ -275,9 +283,7 @@ struct Screen {
             PutStr("\2337m");
         }
         const auto text = content.view();
-        if (!text.empty()) {
-            shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
-        }
+        shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
         if (content.length < cols) {
             PutStr("\233K");
         }
@@ -475,8 +481,6 @@ void render(View &view, Screen &screen, LONG number) {
         headings.character(' ');
         headings.right_field("CLI", 5);
         headings.character(' ');
-    }
-    if (!compact) {
         headings.right_field("PRI", 4);
         headings.character(' ');
     }
@@ -529,8 +533,6 @@ void render(View &view, Screen &screen, LONG number) {
                 line.character(' ');
                 line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
                 line.character(' ');
-            }
-            if (!compact) {
                 line.signed_decimal(row.priority, 4);
                 line.character(' ');
             }
@@ -622,10 +624,10 @@ struct RawConsole {
         }
     }
 
-    void enqueue(char key) {
+    void enqueue(char value) {
         const unsigned next = (tail + 1) % keys.size();
         if (next != head) {
-            keys[tail] = key;
+            keys[tail] = value;
             tail = next;
         }
     }
@@ -734,7 +736,7 @@ struct RawConsole {
         return false;
     }
 
-    void request_size() {
+    static void request_size() {
         PutStr("\2330 q");
         Flush(Output());
     }

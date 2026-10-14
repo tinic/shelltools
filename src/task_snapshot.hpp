@@ -21,15 +21,22 @@ struct TaskRow {
     ULONG stack_pointer;
     LONG process_stack_size;
     LONG process_flags;
+    // capture_one fills these before a row is published.
+    // cppcheck-suppress uninitMemberVarNoCtor
     std::array<char, 96> name;
+    // cppcheck-suppress uninitMemberVarNoCtor
     std::array<char, 64> command;
+    // cppcheck-suppress uninitMemberVarNoCtor
     std::array<char, 96> arguments;
 };
 
 struct TaskSnapshot {
     static constexpr unsigned capacity = 96;
     std::array<TaskRow, capacity> rows;
+    // capture_tasks resets these before reading either value.
+    // cppcheck-suppress uninitMemberVarNoCtor
     unsigned count;
+    // cppcheck-suppress uninitMemberVarNoCtor
     bool truncated;
 };
 

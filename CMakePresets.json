@@ -18,11 +18,20 @@
       "cacheVariables": {
         "SHELLTOOLS_CPU": "68020-60"
       }
+    },
+    {
+      "name": "amiga-analyze",
+      "inherits": "amiga-68000",
+      "binaryDir": "${sourceDir}/build/amiga-analyze",
+      "cacheVariables": {
+        "SHELLTOOLS_ANALYZE": "ON"
+      }
     }
   ],
   "buildPresets": [
     {"name": "amiga-68000", "configurePreset": "amiga-68000"},
-    {"name": "amiga-68020-60", "configurePreset": "amiga-68020-60"}
+    {"name": "amiga-68020-60", "configurePreset": "amiga-68020-60"},
+    {"name": "amiga-analyze", "configurePreset": "amiga-analyze"}
   ],
   "testPresets": [
     {"name": "amiga-68000", "configurePreset": "amiga-68000", "output": {"outputOnFailure": true}},

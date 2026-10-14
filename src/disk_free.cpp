@@ -24,7 +24,7 @@ int main() {
         return rc;
     }
     static InfoData info;
-    const BOOL success = Info(lock, &info);
+    const bool success = Info(lock, &info) != 0;
     UnLock(lock);
     if (!success) {
         const int rc = shelltools::dos_error("DiskFree");

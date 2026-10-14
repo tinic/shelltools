@@ -45,11 +45,11 @@ constexpr bool parse_task_id(std::string_view text, ULONG &address) {
     for (const char c : text) {
         unsigned digit;
         if (c >= '0' && c <= '9') {
-            digit = c - '0';
+            digit = static_cast<unsigned>(c - '0');
         } else if (c >= 'a' && c <= 'f') {
-            digit = c - 'a' + 10;
+            digit = static_cast<unsigned>(c - 'a' + 10);
         } else if (c >= 'A' && c <= 'F') {
-            digit = c - 'A' + 10;
+            digit = static_cast<unsigned>(c - 'A' + 10);
         } else {
             return false;
         }

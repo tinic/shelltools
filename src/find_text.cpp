@@ -83,7 +83,8 @@ int main() {
             if (j == count && !at_eof) {
                 break;
             }
-            const bool end = j == count || input[j] == '\n';
+            const auto index = static_cast<std::size_t>(j);
+            const bool end = j == count || input[index] == '\n';
             if (!end) {
                 if (length == capacity) {
                     if (capacity == maximum_line) {
@@ -103,7 +104,7 @@ int main() {
                     line = next;
                     capacity = next_capacity;
                 }
-                line[length++] = input[j];
+                line[length++] = input[index];
                 continue;
             }
             if (j == count && length == 0) {
@@ -120,7 +121,7 @@ int main() {
                     if (args[3]) {
                         Printf("%lu:", line_number);
                     }
-                    if (!shelltools::write_all(Output(), line, length) ||
+                    if (!shelltools::write_all(Output(), line, static_cast<LONG>(length)) ||
                         !shelltools::write_all(Output(), "\n", 1)) {
                         rc = shelltools::dos_error("FindText");
                         break;

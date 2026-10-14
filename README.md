@@ -41,6 +41,15 @@ cmake --install build/amiga-68000 --prefix /path/to/staging
 
 The optional 68020–68060 build is amiga-68020-60. Binaries install to C/ in the prefix. All tools use C++23, -Os -flto, section garbage collection, and disable RTTI and exceptions. The 68000 build uses the nix20 startup/runtime.
 
+Both release builds use strict GCC warnings as errors, including the [C++ Best Practices warning set](https://github.com/cpp-best-practices/cppbestpractices/blob/master/02-Use_the_Tools_Available.md#compilers) (`-Wall`, `-Wextra`, `-Wpedantic`, `-Wshadow`, conversion and cast checks, and related diagnostics). Run GCC's static analyzer and cppcheck with the analysis preset; cppcheck is required for this preset:
+
+~~~sh
+cmake --preset amiga-analyze
+cmake --build --preset amiga-analyze
+~~~
+
+The analysis build disables LTO so GCC `-fanalyzer` runs. cppcheck checks all translation units except SystemInfo's register-bound m68k inline assembly, which its parser cannot read; GCC still analyzes SystemInfo. The analysis preset also exports `compile_commands.json`.
+
 For target-level smoke checks with [Vamos](https://github.com/cnvogelg/amitools):
 
 ~~~sh
@@ -50,6 +59,8 @@ ctest --preset amiga-68000
 ~~~
 
 The tests exercise both CPU builds when configured with Vamos. They cover help, line handling, search, JSON output, and stale task targeting. Interactive console rendering and CPU sampling require an AmigaOS machine or emulator with vertical blank interrupts. The sibling AmiNetXDuo project has tests/tools/hwshell.py for physical Amiga shell interaction and tools/amiberry-run.sh plus tools/emu-rig-lock.sh for isolated Amiberry runs.
+
+For memory checks, AmiNetXDuo's `tools/enforcer-run.sh -m` boots an isolated 68030 FS-UAE guest with MungWall and Enforcer, then reports hits from the serial log. It needs separate copies of Enforcer, MungWall, and a Kickstart ROM through `AMINETXDUO_ENFORCER`, `AMINETXDUO_MUNGWALL`, and `AMINETXDUO_KICKSTART`. Run WatchTasks with `-a 'MACHINE COUNT=2 TICKS=10'` to exercise snapshots and exit. A `CON:` run also exercises the interactive exit path.
 
 ## Prior art
 
