@@ -70,8 +70,9 @@ struct Line {
     unsigned length = 0;
     unsigned limit;
 
-    constexpr explicit Line(unsigned cols)
-        : limit(cols > 1 ? std::min(cols - 1, max_cols - 1) : 0) {}
+    constexpr explicit Line(unsigned cols, bool full_width = false)
+        : limit(full_width ? std::min(cols, max_cols)
+                           : (cols > 1 ? std::min(cols - 1, max_cols - 1) : 0)) {}
 
     constexpr void character(char c) {
         if (length < limit) {
@@ -99,25 +100,37 @@ struct Line {
         }
         spaces(width - n);
     }
+    constexpr void right_field(std::string_view s, unsigned width) {
+        if (width > s.size()) {
+            spaces(width - s.size());
+        }
+        field(s, std::min<unsigned>(width, s.size()));
+    }
     constexpr std::span<const char> view() const { return {data.data(), length}; }
-    constexpr void decimal(ULONG value) {
+    constexpr void number(ULONG value, unsigned width, bool negative) {
         std::array<char, 10> digits;
         unsigned n = 0;
         do {
             digits[n++] = static_cast<char>('0' + value % 10);
             value /= 10;
         } while (value);
+        const unsigned used = n + (negative ? 1 : 0);
+        if (width > used) {
+            spaces(width - used);
+        }
+        if (negative) {
+            character('-');
+        }
         while (n) {
             character(digits[--n]);
         }
     }
-    constexpr void signed_decimal(LONG value) {
-        if (value < 0) {
-            character('-');
-            decimal(static_cast<ULONG>(-value));
-        } else {
-            decimal(static_cast<ULONG>(value));
-        }
+    constexpr void decimal(ULONG value, unsigned width = 0) { number(value, width, false); }
+    constexpr void signed_decimal(LONG value, unsigned width = 0) {
+        const bool negative = value < 0;
+        const ULONG magnitude =
+            negative ? 0UL - static_cast<ULONG>(value) : static_cast<ULONG>(value);
+        number(magnitude, width, negative);
     }
     constexpr void hex8(ULONG value) {
         static constexpr char digits[] = "0123456789ABCDEF";
@@ -129,6 +142,7 @@ struct Line {
 
 struct Screen {
     std::array<std::array<char, max_cols>, max_rows> previous = {};
+    std::array<unsigned, max_rows> previous_length = {};
     std::array<bool, max_rows> selected = {};
     std::array<bool, max_rows> valid = {};
     unsigned rows = 0;
@@ -151,8 +165,8 @@ struct Screen {
         const unsigned index = row - 1;
         const bool same =
             valid[index] && selected[index] == highlight &&
-            std::ranges::equal(content.view(), std::span{previous[index].data(), content.length}) &&
-            previous[index][content.length] == '\0';
+            previous_length[index] == content.length &&
+            std::ranges::equal(content.view(), std::span{previous[index].data(), content.length});
         if (same) {
             return;
         }
@@ -164,12 +178,14 @@ struct Screen {
         if (!text.empty()) {
             shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
         }
-        PutStr("\233K");
+        if (content.length < cols) {
+            PutStr("\233K");
+        }
         if (highlight) {
             PutStr("\2330m");
         }
         std::ranges::copy(content.view(), previous[index].begin());
-        previous[index][content.length] = '\0';
+        previous_length[index] = content.length;
         selected[index] = highlight;
         valid[index] = true;
     }
@@ -326,7 +342,18 @@ void render(View &view, Screen &screen, LONG number) {
     screen.line(5, rule);
     Line headings(view.cols);
     const bool compact = view.cols < 60;
-    headings.text(compact ? "  PRI STATE NAME" : "  TASK_ID  CLI PRI STATE NAME / COMMAND");
+    headings.spaces(2);
+    if (!compact) {
+        headings.field("TASK_ID", 8);
+        headings.character(' ');
+        headings.right_field("CLI", 5);
+        headings.character(' ');
+    }
+    headings.right_field("PRI", 4);
+    headings.character(' ');
+    headings.field("STATE", 5);
+    headings.character(' ');
+    headings.text("NAME");
     screen.line(6, headings);
 
     const unsigned page = view.rows - 10;
@@ -349,8 +376,9 @@ void render(View &view, Screen &screen, LONG number) {
     } else {
         for (unsigned i = 0; i < page; ++i) {
             const unsigned pos = view.scroll + i;
-            Line line(view.cols);
+            Line line(view.cols, true);
             if (pos >= view.shown) {
+                line.spaces(line.limit);
                 screen.line(7 + i, line);
                 continue;
             }
@@ -360,18 +388,15 @@ void render(View &view, Screen &screen, LONG number) {
             if (!compact) {
                 line.hex8(row.address);
                 line.character(' ');
-                line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
+                line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
                 line.character(' ');
             }
-            line.signed_decimal(row.priority);
+            line.signed_decimal(row.priority, 4);
             line.character(' ');
             line.field(shelltools::task_state(row.state), 5);
             line.character(' ');
             line.text(row.name.data());
-            if (!compact && row.command.front() != '\0' && line.length + 3 < line.limit) {
-                line.text(" / ");
-                line.text(row.command.data());
-            }
+            line.spaces(line.limit - line.length);
             screen.line(7 + i, line, pos == view.selected);
         }
     }
@@ -389,6 +414,10 @@ void render(View &view, Screen &screen, LONG number) {
         detail.hex8(row.address);
         detail.text("  CLI ");
         detail.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
+        if (row.command.front() != '\0') {
+            detail.text("  CMD ");
+            detail.text(row.command.data());
+        }
         signals.text("SIGNALS ");
         signals.hex8(row.signal_alloc);
         signals.character('/');
