@@ -1003,7 +1003,7 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
         } else {
             Printf("SNAPSHOT=%ld CHIP_FREE=%lu FAST_FREE=%lu\n", round + 1, AvailMem(MEMF_CHIP),
                    AvailMem(MEMF_FAST));
-            shelltools::print_task_header();
+            shelltools::print_task_header(true);
         }
         for (unsigned i = 0; i < snapshot.count; ++i) {
             shelltools::print_task(snapshot.rows[i], machine, round + 1,

@@ -4,6 +4,7 @@
 import argparse
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 
@@ -59,6 +60,19 @@ def main():
         system = json.loads(result.stdout)
         if "exec_version" not in system or "chip_free" not in system:
             raise AssertionError(f"SystemInfo output: {system!r}")
+
+        result = run("ShowTasks")
+        check(result.returncode, 0, "ShowTasks table rc")
+        lines = result.stdout.splitlines()
+        if (len(lines) < 3 or not lines[1].startswith("TYPE TASK_ID") or
+                not re.match(r"^P +[0-9A-F]{8} +[0-9]+ +[-0-9]+ +RUN +[0-9]+ +ShowTasks$",
+                             lines[2]) or "SIGNALS" in result.stdout or "\x00" in result.stdout):
+            raise AssertionError(f"ShowTasks table malformed: {result.stdout!r}")
+
+        result = run("ShowTasks", "DETAIL")
+        check(result.returncode, 0, "ShowTasks DETAIL rc")
+        if "  SIGNALS   ALLOC " not in result.stdout or "  STACK     " not in result.stdout:
+            raise AssertionError(f"ShowTasks DETAIL incomplete: {result.stdout!r}")
 
         result = run("ShowTasks", "MACHINE")
         check(result.returncode, 0, "ShowTasks rc")
