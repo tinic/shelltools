@@ -1,6 +1,7 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR m68k)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES SHELLTOOLS_TOOLCHAIN_ROOT)
 
 if(NOT SHELLTOOLS_TOOLCHAIN_ROOT AND DEFINED ENV{SHELLTOOLS_TOOLCHAIN_ROOT})
     set(SHELLTOOLS_TOOLCHAIN_ROOT "$ENV{SHELLTOOLS_TOOLCHAIN_ROOT}" CACHE PATH
@@ -16,6 +17,11 @@ else()
     get_filename_component(SHELLTOOLS_TOOLCHAIN_ROOT "${_bin}/.." ABSOLUTE)
     set(SHELLTOOLS_TOOLCHAIN_ROOT "${SHELLTOOLS_TOOLCHAIN_ROOT}" CACHE PATH
         "AmigaPorts toolchain root")
+endif()
+
+set(_cc "${_bin}/m68k-amigaos-gcc")
+if(NOT EXISTS "${_cc}")
+    message(FATAL_ERROR "No m68k-amigaos-gcc at ${_cc}")
 endif()
 
 if(NOT EXISTS "${_cxx}")
@@ -37,6 +43,7 @@ if(NOT _release OR CMAKE_MATCH_1 LESS 16 OR
 endif()
 
 set(CMAKE_CXX_COMPILER "${_cxx}")
+set(CMAKE_C_COMPILER "${_cc}")
 set(CMAKE_AR "${_bin}/m68k-amigaos-gcc-ar" CACHE FILEPATH "")
 set(CMAKE_RANLIB "${_bin}/m68k-amigaos-gcc-ranlib" CACHE FILEPATH "")
 set(CMAKE_NM "${_bin}/m68k-amigaos-gcc-nm" CACHE FILEPATH "")

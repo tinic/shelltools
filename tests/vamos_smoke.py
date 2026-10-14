@@ -25,6 +25,7 @@ def main():
         fixture = pathlib.Path(tmp)
         (fixture / "lines.txt").write_bytes(b"alpha\nbeta\ngamma\ndelta\n")
         (fixture / "no-final.txt").write_bytes(b"first\nlast")
+        (fixture / "regex-work.txt").write_bytes(b"a" * 200 + b"b\n")
 
         def run(name, *arguments):
             return subprocess.run(
@@ -54,6 +55,22 @@ def main():
         check((result.returncode, result.stdout), (0, "2:beta\n4:delta\n"), "FindText")
         result = run("FindText", "TEXT=missing", "FILE=test:lines.txt", "COUNT")
         check((result.returncode, result.stdout), (5, "0\n"), "FindText no match")
+
+        result = run("FindText", "^(alpha|gamma)$", "FILE=test:lines.txt", "REGEX")
+        check((result.returncode, result.stdout), (0, "alpha\ngamma\n"), "FindText regexp")
+        result = run("FindText", "^a.*a$", "FILE=test:lines.txt", "REGEX")
+        check((result.returncode, result.stdout), (0, "alpha\n"), "FindText regexp star")
+        result = run("FindText", "^ALPHA$", "FILE=test:lines.txt", "REGEX", "NOCASE")
+        check((result.returncode, result.stdout), (0, "alpha\n"), "FindText regexp nocase")
+        result = run("FindText", "^[a-z]{4}$", "FILE=test:lines.txt", "REGEX", "COUNT")
+        check((result.returncode, result.stdout), (0, "1\n"), "FindText regexp count")
+        result = run("FindText", "[", "FILE=test:lines.txt", "REGEX")
+        check(result.returncode, 10, "FindText invalid regexp rc")
+        if "regexp:" not in result.stdout:
+            raise AssertionError(f"FindText invalid regexp output: {result.stdout!r}")
+        result = run("FindText", "^(a+)+$", "FILE=test:regex-work.txt", "REGEX")
+        check((result.returncode, result.stdout),
+              (10, "FindText: regexp work limit reached\n"), "FindText regexp budget")
 
         result = run("SystemInfo", "MACHINE")
         check(result.returncode, 0, "SystemInfo rc")

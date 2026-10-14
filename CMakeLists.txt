@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(shelltools LANGUAGES CXX)
+project(shelltools LANGUAGES C CXX)
 
 if(NOT CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR "Configure with cmake/toolchain-m68k-amigaos.cmake")
@@ -8,6 +8,9 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(SHELLTOOLS_ANALYZE "Build with GCC static analyzer instead of LTO" OFF)
@@ -61,6 +64,17 @@ shelltool(LastLines src/last_lines.cpp)
 shelltool(FindText src/find_text.cpp)
 shelltool(SystemInfo src/system_info.cpp)
 
+add_library(quickjs_regexp STATIC
+    third_party/quickjs/libregexp.c
+    third_party/quickjs/libunicode.c)
+target_include_directories(quickjs_regexp SYSTEM PUBLIC third_party/quickjs)
+# QuickJS's cutils.h has no AmigaOS thread switch. These two regexp sources
+# use none of its thread helpers; this selects its no-threads branch.
+target_compile_definitions(quickjs_regexp PRIVATE EMSCRIPTEN=1)
+target_compile_options(quickjs_regexp PRIVATE
+    ${_cpu_flag} -Os ${_lto_flags} -ffunction-sections -fdata-sections)
+target_link_libraries(FindText PRIVATE quickjs_regexp)
+
 if(SHELLTOOLS_ANALYZE)
     find_program(CPPCHECK_EXECUTABLE cppcheck REQUIRED)
     # cppcheck cannot parse SystemInfo's m68k register-bound inline assembly.
@@ -72,6 +86,7 @@ if(SHELLTOOLS_ANALYZE)
             --enable=all --inconclusive --check-level=exhaustive
             --inline-suppr
             -i src/system_info.cpp
+            -i third_party/quickjs
             --suppress=missingIncludeSystem --suppress=checkersReport
             --error-exitcode=1
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

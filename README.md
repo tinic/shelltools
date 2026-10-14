@@ -12,9 +12,11 @@ Small AmigaOS 68k Shell commands for observing and controlling a machine. Comman
 | SystemInfo | OS and hardware information | MACHINE |
 | FirstLines | First lines of a file or input stream | FILE, LINES |
 | LastLines | Last lines of a seekable file | FILE, LINES |
-| FindText | Literal line search | TEXT, FILE, NOCASE, NUMBER, INVERT, COUNT |
+| FindText | Literal or regular expression line search | TEXT, FILE, REGEX, NOCASE, NUMBER, INVERT, COUNT |
 
 Run Command HELP for exact syntax and return codes. No Unix aliases are installed.
+
+`FindText` searches literal text by default. Add `REGEX` to use QuickJS regular expression syntax, for example `ShowTasks | FindText Ami.* REGEX`. `NOCASE`, `NUMBER`, `INVERT`, and `COUNT` work in both modes. Patterns are limited to 1024 bytes and input lines to 65536 bytes. Complex matches may exhaust memory sooner; invalid patterns, memory exhaustion, or the work limit return 10.
 
 ShowTasks reports the task address as task_id and pr_TaskNum as cli_id. It also emits process_number when pr_TaskNum is nonzero; otherwise process_number is null. This is a Shell process number, not a universal process ID. Task addresses can be reused after a task exits. BreakTask TASK=<hex> NAME=<exact name> verifies both values against a current Exec list while task switching is forbidden, then sends Ctrl-C. The CLI route similarly checks the current command name. Ctrl-C is advisory; the target decides whether to exit.
 
@@ -36,12 +38,15 @@ Use [AmigaPorts GCC 16.2-rc16 or newer](https://github.com/AmigaPorts/m68k-amiga
 
 ~~~sh
 export SHELLTOOLS_TOOLCHAIN_ROOT=/path/to/m68k-amigaos-gcc-16.2
+git submodule update --init third_party/quickjs
 cmake --preset amiga-68000
 cmake --build --preset amiga-68000
 cmake --install build/amiga-68000 --prefix /path/to/staging
 ~~~
 
 The optional 68020–68060 build is amiga-68020-60. Binaries install to C/ in the prefix. All tools use C++23, -Os -flto, section garbage collection, and disable RTTI and exceptions. The 68000 build uses the nix20 startup/runtime.
+
+FindText's own code is C++23. Its pinned [QuickJS-NG](https://github.com/quickjs-ng/quickjs) regexp and Unicode modules build as third-party C11 under the project's MIT license. Literal searches do not allocate a private stack; REGEX uses a temporary 16 KB stack and a bounded execution budget.
 
 Both release builds use strict GCC warnings as errors, including the [C++ Best Practices warning set](https://github.com/cpp-best-practices/cppbestpractices/blob/master/02-Use_the_Tools_Available.md#compilers) (`-Wall`, `-Wextra`, `-Wpedantic`, `-Wshadow`, conversion and cast checks, and related diagnostics). Run GCC's static analyzer and cppcheck with the analysis preset; cppcheck is required for this preset:
 
