@@ -74,11 +74,11 @@ function(shelltool name)
         SHELLTOOLS_VERSION_DATE="${_version_date}"
         SHELLTOOLS_VERSION_SUFFIX="${SHELLTOOLS_VERSION_SUFFIX}")
     set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/C")
-    install(TARGETS ${name} RUNTIME DESTINATION C)
 endfunction()
 
 shelltool(ShowTasks src/show_tasks.cpp src/task_snapshot.cpp src/task_output.cpp)
 shelltool(WatchTasks src/watch_tasks.cpp src/task_snapshot.cpp src/task_output.cpp)
+install(TARGETS ShowTasks WatchTasks RUNTIME DESTINATION C)
 
 if(SHELLTOOLS_ANALYZE)
     find_program(CPPCHECK_EXECUTABLE cppcheck REQUIRED)
@@ -98,6 +98,11 @@ set(SHELLTOOLS_VAMOS "" CACHE FILEPATH "Path to Vamos for target smoke tests")
 if(SHELLTOOLS_VAMOS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    shelltool(WatchTasksStateTests tests/watchtasks_state.cpp src/task_snapshot.cpp src/task_output.cpp)
+    add_test(NAME watchtasks-state
+        COMMAND "${SHELLTOOLS_VAMOS}" -C
+            "$<IF:$<STREQUAL:${SHELLTOOLS_CPU},68000>,68000,68020>"
+            "$<TARGET_FILE:WatchTasksStateTests>")
     add_test(NAME amiga-smoke
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/vamos_smoke.py"
             --vamos "${SHELLTOOLS_VAMOS}" --bin-dir "${CMAKE_BINARY_DIR}/C"
