@@ -170,6 +170,7 @@ struct View {
 
 constexpr unsigned max_rows = 100;
 constexpr unsigned max_cols = 160;
+constexpr unsigned task_page_rows(unsigned rows) { return rows >= 14 ? rows - 9 : 1; }
 
 struct Line {
     std::array<char, max_cols> data = {};
@@ -334,7 +335,7 @@ void prepare(View &view) {
     if (view.selected >= view.shown) {
         view.selected = view.shown ? view.shown - 1 : 0;
     }
-    const unsigned page = view.rows >= 14 ? view.rows - 10 : 1;
+    const unsigned page = task_page_rows(view.rows);
     if (view.selected < view.scroll) {
         view.scroll = view.selected;
     }
@@ -468,7 +469,25 @@ void render(View &view, Screen &screen, LONG number) {
     status.decimal(view.cpu.samples);
     screen.line(4, status);
     Line rule(view.cols);
-    for (unsigned i = 0; i < rule.limit; ++i) {
+    rule.text("-- Filter: ");
+    const std::string_view filter{view.filter.data()};
+    const std::string_view message{view.editing ? "" : view.message};
+    const unsigned room = rule.limit - rule.length;
+    const unsigned reserved = static_cast<unsigned>(
+        std::min<std::size_t>(room, (view.editing ? 1U : 0U) +
+                                      (message.empty() ? 0U : message.size() + 2)));
+    const unsigned filter_room = room - reserved;
+    rule.text(filter.substr(filter.size() > filter_room ? filter.size() - filter_room : 0));
+    if (view.editing) {
+        rule.character('_');
+    } else if (!message.empty()) {
+        rule.text("  ");
+        rule.text(message);
+    }
+    if (rule.length < rule.limit) {
+        rule.character(' ');
+    }
+    while (rule.length < rule.limit) {
         rule.character('-');
     }
     screen.line(5, rule);
@@ -493,7 +512,7 @@ void render(View &view, Screen &screen, LONG number) {
     headings.text("NAME");
     screen.line(6, headings);
 
-    const unsigned page = view.rows - 10;
+    const unsigned page = task_page_rows(view.rows);
     if (view.help) {
         static constexpr std::array help = {
             "T/P  Exec task (thread) / DOS process",
@@ -580,18 +599,8 @@ void render(View &view, Screen &screen, LONG number) {
     } else {
         detail.text("No matching tasks");
     }
-    screen.line(view.rows - 3, detail);
-    screen.line(view.rows - 2, signals);
-    Line filter(view.cols);
-    filter.text("Filter: ");
-    filter.text(view.filter.data());
-    if (view.editing) {
-        filter.character('_');
-    } else {
-        filter.text("  ");
-        filter.text(view.message);
-    }
-    screen.line(view.rows - 1, filter);
+    screen.line(view.rows - 2, detail);
+    screen.line(view.rows - 1, signals);
     Line shortcuts(view.cols);
     shortcuts.text(
         view.cols < 80
@@ -785,10 +794,10 @@ void handle_key(View &view, char key, bool &done) {
             --view.selected;
         }
     } else if (key == 'n') {
-        view.selected += view.rows >= 14 ? view.rows - 10 : 1;
+        view.selected += task_page_rows(view.rows);
     } else if (key == 'u') {
-        view.selected = view.selected > (view.rows >= 14 ? view.rows - 10 : 1)
-                            ? view.selected - (view.rows >= 14 ? view.rows - 10 : 1)
+        view.selected = view.selected > task_page_rows(view.rows)
+                            ? view.selected - task_page_rows(view.rows)
                             : 0;
     } else if (key == 't' || key == 'p' || key == 's' || key == 'c' || key == 'a') {
         view.sort = key;
