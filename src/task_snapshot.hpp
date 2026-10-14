@@ -21,7 +21,7 @@ struct TaskRow {
     ULONG stack_pointer;
     LONG process_stack_size;
     LONG process_flags;
-    std::array<char, 48> name;
+    std::array<char, 96> name;
     std::array<char, 64> command;
     std::array<char, 96> arguments;
 };

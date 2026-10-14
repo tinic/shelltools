@@ -325,10 +325,8 @@ void render(View &view, Screen &screen, LONG number) {
     }
     screen.line(5, rule);
     Line headings(view.cols);
-    headings.text("  TASK_ID  CLI PRI STATE NAME");
-    if (view.cols >= 66) {
-        headings.text("                 COMMAND");
-    }
+    const bool compact = view.cols < 60;
+    headings.text(compact ? "  PRI STATE NAME" : "  TASK_ID  CLI PRI STATE NAME / COMMAND");
     screen.line(6, headings);
 
     const unsigned page = view.rows - 10;
@@ -359,17 +357,19 @@ void render(View &view, Screen &screen, LONG number) {
             const TaskRow &row = view.snapshot.rows[view.order[pos]];
             line.character(pos == view.selected ? '>' : ' ');
             line.character(' ');
-            line.hex8(row.address);
-            line.character(' ');
-            line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
-            line.character(' ');
+            if (!compact) {
+                line.hex8(row.address);
+                line.character(' ');
+                line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
+                line.character(' ');
+            }
             line.signed_decimal(row.priority);
             line.character(' ');
             line.field(shelltools::task_state(row.state), 5);
             line.character(' ');
-            line.field(row.name.data(), view.cols >= 66 ? 20 : view.cols - 32);
-            if (view.cols >= 66) {
-                line.character(' ');
+            line.text(row.name.data());
+            if (!compact && row.command.front() != '\0' && line.length + 3 < line.limit) {
+                line.text(" / ");
                 line.text(row.command.data());
             }
             screen.line(7 + i, line, pos == view.selected);
