@@ -441,13 +441,25 @@ struct Panel {
 struct Frame {
     std::array<char, 4096> data = {};
     unsigned used = 0;
+    bool lost = false; // a write failed: the screen no longer shows the cache
 
     void flush() {
-        if (used) {
-            Flush(Output());
-            Write(Output(), data.data(), static_cast<LONG>(used));
-            used = 0;
+        if (!used) {
+            return;
         }
+        Flush(Output());
+        const char *at = data.data();
+        LONG left = static_cast<LONG>(used);
+        while (left > 0) {
+            const LONG wrote = Write(Output(), at, left);
+            if (wrote <= 0) {
+                lost = true;
+                break;
+            }
+            at += wrote;
+            left -= wrote;
+        }
+        used = 0;
     }
     void bytes(std::span<const char> text) {
         if (used + text.size() > data.size()) {
@@ -489,6 +501,11 @@ struct Screen {
     unsigned cols = 0;
 
     void size(unsigned height, unsigned width) {
+        if (frame.lost) {
+            // Part of an earlier frame never arrived: redraw every row.
+            frame.lost = false;
+            valid.fill(false);
+        }
         if (height == rows && width == cols) {
             return;
         }
