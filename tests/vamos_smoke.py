@@ -82,6 +82,8 @@ def main():
         snapshots = [json.loads(line) for line in result.stdout.splitlines()]
         if snapshots[0].get("snapshot") != 1:
             raise AssertionError(f"WatchTasks output: {snapshots!r}")
+        if not any("cpu_tenths" in row for row in snapshots if "task_id" in row):
+            raise AssertionError(f"WatchTasks CPU output missing: {snapshots!r}")
 
         result = run("BreakTask", "CLI=9999", "COMMAND=absent")
         check(result.returncode, 5, "BreakTask missing target rc")

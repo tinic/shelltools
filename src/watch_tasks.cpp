@@ -5,6 +5,8 @@
 #include <dos/dosextens.h>
 #include <exec/memory.h>
 #include <exec/nodes.h>
+#include <exec/interrupts.h>
+#include <hardware/intbits.h>
 #include <proto/exec.h>
 
 #include <algorithm>
@@ -16,6 +18,103 @@ namespace {
 
 using shelltools::TaskRow;
 using shelltools::TaskSnapshot;
+
+struct CpuSampler {
+    static constexpr unsigned capacity = 256;
+    struct Buffer {
+        std::array<Task *, capacity> tasks = {};
+        unsigned next = 0;
+        unsigned count = 0;
+    };
+    std::array<Buffer, 2> buffers = {};
+    Interrupt server = {};
+    unsigned active = 0;
+
+    CpuSampler();
+    ~CpuSampler();
+    CpuSampler(const CpuSampler &) = delete;
+    CpuSampler &operator=(const CpuSampler &) = delete;
+
+    void sample() {
+        Buffer &buffer = buffers[active];
+        Task *task = SysBase->ThisTask;
+        buffer.tasks[buffer.next] = task && task->tc_State == TS_RUN ? task : nullptr;
+        buffer.next = (buffer.next + 1) % capacity;
+        if (buffer.count < capacity) {
+            ++buffer.count;
+        }
+    }
+
+    unsigned take(std::array<Task *, capacity> &out) {
+        Disable();
+        const unsigned completed = active;
+        active ^= 1;
+        buffers[active].next = 0;
+        buffers[active].count = 0;
+        Enable();
+        const Buffer &buffer = buffers[completed];
+        std::ranges::copy(std::span{buffer.tasks}.first(buffer.count), out.begin());
+        return buffer.count;
+    }
+};
+
+CpuSampler *current_sampler = nullptr;
+
+extern "C" __attribute__((noinline, used)) ULONG watchtasks_vblank() {
+    if (current_sampler) {
+        current_sampler->sample();
+    }
+    return 0; // Exec requires Z set so the next VBlank server runs.
+}
+
+inline CpuSampler::CpuSampler() {
+    server.is_Node.ln_Type = NT_INTERRUPT;
+    server.is_Node.ln_Pri = -60;
+    server.is_Node.ln_Name = const_cast<char *>("WatchTasks CPU");
+    server.is_Code = reinterpret_cast<decltype(server.is_Code)>(&watchtasks_vblank);
+    current_sampler = this;
+    AddIntServer(INTB_VERTB, &server);
+}
+
+inline CpuSampler::~CpuSampler() {
+    RemIntServer(INTB_VERTB, &server);
+    current_sampler = nullptr;
+}
+
+struct CpuUsage {
+    static constexpr unsigned minimum_samples = 10;
+    std::array<unsigned, TaskSnapshot::capacity> tenths = {};
+    unsigned samples = 0;
+    unsigned busy_tenths = 0;
+
+    void update(CpuSampler &sampler, const TaskSnapshot &snapshot) {
+        static std::array<Task *, CpuSampler::capacity> captured;
+        samples = sampler.take(captured);
+        tenths.fill(0);
+        busy_tenths = 0;
+        if (samples < minimum_samples) {
+            samples = 0;
+            return;
+        }
+        std::array<unsigned, TaskSnapshot::capacity> counts = {};
+        for (Task *task : std::span{captured}.first(samples)) {
+            if (task) {
+                ++busy_tenths;
+            }
+            const ULONG address = reinterpret_cast<ULONG>(task);
+            for (unsigned i = 0; i < snapshot.count; ++i) {
+                if (snapshot.rows[i].address == address) {
+                    ++counts[i];
+                    break;
+                }
+            }
+        }
+        for (unsigned i = 0; i < snapshot.count; ++i) {
+            tenths[i] = (counts[i] * 1000 + samples / 2) / samples;
+        }
+        busy_tenths = (busy_tenths * 1000 + samples / 2) / samples;
+    }
+};
 
 constexpr char lower(char c) {
     return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
@@ -43,6 +142,7 @@ constexpr bool contains(std::string_view text, std::string_view part) {
 
 struct View {
     TaskSnapshot snapshot;
+    CpuUsage cpu;
     std::array<unsigned, TaskSnapshot::capacity> order;
     unsigned shown = 0;
     unsigned selected = 0;
@@ -51,7 +151,7 @@ struct View {
     unsigned cols = 80;
     std::array<char, 32> filter = {};
     const char *message = "";
-    char sort = 'p';
+    char sort = 't';
     bool paused = false;
     bool help = false;
     bool editing = false;
@@ -191,7 +291,11 @@ struct Screen {
     }
 };
 
-constexpr bool before(const TaskRow &a, const TaskRow &b, char sort) {
+constexpr bool before(const TaskRow &a, const TaskRow &b, unsigned a_cpu, unsigned b_cpu,
+                      char sort) {
+    if (sort == 't' && a_cpu != b_cpu) {
+        return a_cpu > b_cpu;
+    }
     if (sort == 'p' && a.priority != b.priority) {
         return a.priority > b.priority;
     }
@@ -214,7 +318,8 @@ void prepare(View &view) {
             continue;
         }
         unsigned at = view.shown++;
-        while (at && before(row, view.snapshot.rows[view.order[at - 1]], view.sort)) {
+        while (at && before(row, view.snapshot.rows[view.order[at - 1]], view.cpu.tenths[i],
+                            view.cpu.tenths[view.order[at - 1]], view.sort)) {
             view.order[at] = view.order[at - 1];
             --at;
         }
@@ -252,6 +357,16 @@ constexpr void memory_bar(Line &line, std::string_view label, ULONG free, ULONG 
     line.text("K / ");
     line.decimal(total / 1024);
     line.character('K');
+}
+
+constexpr void cpu_field(Line &line, unsigned tenths, unsigned samples) {
+    if (!samples) {
+        line.text("  --.-");
+        return;
+    }
+    line.decimal(tenths / 10, 4);
+    line.character('.');
+    line.decimal(tenths % 10);
 }
 
 constexpr bool same_name(const char *live, std::string_view saved) {
@@ -306,7 +421,7 @@ void render(View &view, Screen &screen, LONG number) {
             ++waiting;
         }
     }
-    Line title(view.cols);
+    Line title(view.cols, true);
     title.text("WatchTasks  #");
     title.decimal(static_cast<ULONG>(number));
     title.text("  tasks ");
@@ -319,6 +434,7 @@ void render(View &view, Screen &screen, LONG number) {
     if (view.snapshot.truncated) {
         title.text("  TRUNCATED");
     }
+    title.spaces(title.limit - title.length);
     screen.line(1, title, true);
     Line chip(view.cols);
     memory_bar(chip, "CHIP", view.chip_free, view.chip_total);
@@ -333,7 +449,17 @@ void render(View &view, Screen &screen, LONG number) {
     status.decimal(ready);
     status.text("  WAIT ");
     status.decimal(waiting);
-    status.text("  CPU unavailable");
+    status.text("  CPU~ ");
+    if (view.cpu.samples) {
+        status.decimal(view.cpu.busy_tenths / 10);
+        status.character('.');
+        status.decimal(view.cpu.busy_tenths % 10);
+        status.character('%');
+    } else {
+        status.text("--.-%");
+    }
+    status.text("  SAMPLES ");
+    status.decimal(view.cpu.samples);
     screen.line(4, status);
     Line rule(view.cols);
     for (unsigned i = 0; i < rule.limit; ++i) {
@@ -349,10 +475,16 @@ void render(View &view, Screen &screen, LONG number) {
         headings.right_field("CLI", 5);
         headings.character(' ');
     }
-    headings.right_field("PRI", 4);
+    if (!compact) {
+        headings.right_field("PRI", 4);
+        headings.character(' ');
+    }
+    headings.right_field("CPU%", 6);
     headings.character(' ');
-    headings.field("STATE", 5);
-    headings.character(' ');
+    if (!compact) {
+        headings.field("STATE", 5);
+        headings.character(' ');
+    }
     headings.text("NAME");
     screen.line(6, headings);
 
@@ -360,10 +492,11 @@ void render(View &view, Screen &screen, LONG number) {
     if (view.help) {
         static constexpr std::array help = {
             "j/k or arrows  select; n/u page down/up",
-            "p/s/c/a  sort priority/state/CLI/name",
+            "t/p/s/c/a  sort CPU/priority/state/CLI/name",
             "/  filter name or command; Enter accepts",
             "b  send Ctrl-C to selected task",
             "Space  pause/resume snapshots",
+            "CPU%  VBlank sample estimate; -- means few samples",
             "h  close help; q  quit",
         };
         for (unsigned i = 0; i < page; ++i) {
@@ -382,7 +515,8 @@ void render(View &view, Screen &screen, LONG number) {
                 screen.line(7 + i, line);
                 continue;
             }
-            const TaskRow &row = view.snapshot.rows[view.order[pos]];
+            const unsigned task_index = view.order[pos];
+            const TaskRow &row = view.snapshot.rows[task_index];
             line.character(pos == view.selected ? '>' : ' ');
             line.character(' ');
             if (!compact) {
@@ -391,10 +525,16 @@ void render(View &view, Screen &screen, LONG number) {
                 line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
                 line.character(' ');
             }
-            line.signed_decimal(row.priority, 4);
+            if (!compact) {
+                line.signed_decimal(row.priority, 4);
+                line.character(' ');
+            }
+            cpu_field(line, view.cpu.tenths[task_index], view.cpu.samples);
             line.character(' ');
-            line.field(shelltools::task_state(row.state), 5);
-            line.character(' ');
+            if (!compact) {
+                line.field(shelltools::task_state(row.state), 5);
+                line.character(' ');
+            }
             line.text(row.name.data());
             line.spaces(line.limit - line.length);
             screen.line(7 + i, line, pos == view.selected);
@@ -412,6 +552,8 @@ void render(View &view, Screen &screen, LONG number) {
         detail.text(row.type == NT_PROCESS ? "PROCESS" : "TASK");
         detail.text("  TASK ");
         detail.hex8(row.address);
+        detail.text("  PRI ");
+        detail.signed_decimal(row.priority);
         detail.text("  CLI ");
         detail.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
         if (row.command.front() != '\0') {
@@ -446,8 +588,8 @@ void render(View &view, Screen &screen, LONG number) {
     Line shortcuts(view.cols);
     shortcuts.text(
         view.cols < 80
-            ? "j/k  / filter  b break  h help  q quit"
-            : "j/k move  n/u page  p/s/c/a sort  / filter  b break  h help  Space pause q quit");
+            ? "j/k  t CPU sort  / filter  h help  q quit"
+            : "j/k move  n/u page  t/p/s/c/a sort  / filter  b break  h help  Space pause q quit");
     screen.line(view.rows, shortcuts);
     Flush(Output());
 }
@@ -641,7 +783,7 @@ void handle_key(View &view, char key, bool &done) {
         view.selected = view.selected > (view.rows >= 14 ? view.rows - 10 : 1)
                             ? view.selected - (view.rows >= 14 ? view.rows - 10 : 1)
                             : 0;
-    } else if (key == 'p' || key == 's' || key == 'c' || key == 'a') {
+    } else if (key == 't' || key == 'p' || key == 's' || key == 'c' || key == 'a') {
         view.sort = key;
         view.selected = 0;
         view.scroll = 0;
@@ -657,6 +799,7 @@ int watch_interactive(LONG ticks, LONG count, unsigned requested_rows, unsigned 
     if (!console.active) {
         return watch_snapshots(ticks, count, false);
     }
+    CpuSampler sampler;
     console.detect_size();
     static View view;
     static Screen screen;
@@ -673,6 +816,7 @@ int watch_interactive(LONG ticks, LONG count, unsigned requested_rows, unsigned 
         }
         if (!view.paused || number == 0) {
             shelltools::capture_tasks(view.snapshot);
+            view.cpu.update(sampler, view.snapshot);
             view.chip_free = AvailMem(MEMF_CHIP);
             view.chip_total = AvailMem(MEMF_CHIP | MEMF_TOTAL);
             view.fast_free = AvailMem(MEMF_FAST);
@@ -712,11 +856,15 @@ int watch_interactive(LONG ticks, LONG count, unsigned requested_rows, unsigned 
 
 int watch_snapshots(LONG ticks, LONG count, bool machine) {
     static TaskSnapshot snapshot;
+    static CpuUsage cpu;
+    CpuSampler sampler;
     for (LONG round = 0; count == 0 || round < count; ++round) {
         if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
             return shelltools::warn;
         }
+        Delay(ticks);
         shelltools::capture_tasks(snapshot);
+        cpu.update(sampler, snapshot);
         if (machine) {
             Printf("{\"snapshot\":%ld,\"chip_free\":%lu,\"fast_free\":%lu}\n", round + 1,
                    AvailMem(MEMF_CHIP), AvailMem(MEMF_FAST));
@@ -726,14 +874,12 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
             shelltools::print_task_header();
         }
         for (unsigned i = 0; i < snapshot.count; ++i) {
-            shelltools::print_task(snapshot.rows[i], machine, round + 1);
+            shelltools::print_task(snapshot.rows[i], machine, round + 1,
+                                  cpu.samples ? static_cast<LONG>(cpu.tenths[i]) : -1);
         }
         if (snapshot.truncated) {
             PutStr(machine ? "{\"truncated\":true}\n" : "TRUNCATED=1\n");
             return shelltools::warn;
-        }
-        if (count == 0 || round + 1 < count) {
-            Delay(ticks);
         }
     }
     return shelltools::ok;
@@ -749,10 +895,11 @@ int main() {
     }
     if (args[5]) {
         shelltools::help(
-            "PURPOSE: Live task and memory monitor\n"
+            "PURPOSE: Live task CPU and memory monitor\n"
             "USAGE: WatchTasks [TICKS=<n>] [COUNT=<n>] [ROWS=<n>] [COLS=<n>] [MACHINE]\n"
             "DEFAULT: 50 ticks, unlimited, auto console size\n"
-            "KEYS: j/k move; p/s/c/a sort; / filter; b break; h help; q quit\n"
+            "KEYS: j/k move; t/p/s/c/a sort; / filter; b break; h help; q quit\n"
+            "CPU: VBlank sample estimate; -- means few samples\n"
             "OUTPUT: Interactive ISO-8859-1 UI; MACHINE gives JSON lines\n"
             "RC: 0=done 5=break/truncated 10=error\n");
         FreeArgs(rd);

@@ -7,7 +7,7 @@ Small AmigaOS 68k Shell commands for observing and controlling a machine. Comman
 | Command | Purpose | Key options |
 | --- | --- | --- |
 | ShowTasks | Exec task and DOS process details | MACHINE |
-| WatchTasks | Live console task monitor | TICKS, COUNT, ROWS, COLS, MACHINE |
+| WatchTasks | Live task CPU and memory monitor | TICKS, COUNT, ROWS, COLS, MACHINE |
 | BreakTask | Send Ctrl-C to a verified task | CLI + COMMAND, or TASK + NAME |
 | SystemInfo | OS and hardware information | MACHINE |
 | FirstLines | First lines of a file or input stream | FILE, LINES |
@@ -22,7 +22,7 @@ ShowTasks reports the task address as task_id and pr_TaskNum as cli_id. It also 
 
 ShowTasks detail rows and JSON include type, state, priority, task flags, signal masks, stack bounds, saved stack pointer, process stack size/flags, task name, command, and arguments. Stack values are snapshots and a running task's saved stack pointer may be stale. Bounded name/command/argument copies avoid allocating or doing DOS I/O while Forbid() is active. A snapshot is capped at 96 tasks; truncation returns 5.
 
-WatchTasks uses ISO-8859-1 guillemets and middle dots for memory bars, and Amiga console CSI sequences for repainting. It reads the console's window bounds on startup and checks for resizing while running; ROWS and COLS override detection when needed. It updates only changed lines, including when selection moves. Task rows use fixed columns for IDs, priority, and state; the name takes the remaining width, and the selected task's command appears in the detail line. Narrow windows use a compact layout. In an interactive console: j/k or arrows select, n/u page, p/s/c/a sort by priority/state/CLI/name, / filters, Space pauses, b sends Ctrl-C to the selected task, h shows keys, and q quits. With redirected I/O it prints repeated detail snapshots; MACHINE emits JSON lines. Classic Exec does not expose a portable per-task CPU time counter. Scout obtains CPU usage by patching system functions, so this tool labels CPU percentages unavailable.
+WatchTasks uses ISO-8859-1 guillemets and middle dots for memory bars, and Amiga console CSI sequences for repainting. It reads the console's window bounds on startup and checks for resizing while running; ROWS and COLS override detection when needed. It updates only changed lines, including when selection moves. The title and selected task fill their full rows. Task rows show task ID, CLI number, priority, sampled CPU percentage, state, and the longest name the window permits; narrow windows retain CPU percentage and name. The selected task's command appears in the detail line. In an interactive console: j/k or arrows select, n/u page, t/p/s/c/a sort by CPU/priority/state/CLI/name, / filters, Space pauses, b sends Ctrl-C to the selected task, h shows keys, and q quits. CPU usage is estimated from the task running at each vertical blank interrupt (50 or 60 samples per second); idle frames count toward the denominator. The server is removed when WatchTasks exits. Values below ten samples appear as unavailable. With redirected I/O it prints repeated detail snapshots; MACHINE emits JSON lines with `cpu_tenths` (percent times ten, or null when unavailable). Scout patches Exec task switching for more precise timing; this tool uses sampling to keep the monitor small and removable.
 
 SystemInfo opens identify.library at runtime and reports system, CPU, FPU, MMU, OS, chipset, clock, graphics, and audio when installed. It falls back to Exec version and Chip/Fast free memory without the library. Install a current identify.library in LIBS: for the full report. RebootSync uses the OS 3.2 Reboot SYNC command, which attempts to inhibit partitions before reboot. It rejects older Exec versions.
 
@@ -47,7 +47,7 @@ cmake --build --preset amiga-68000
 ctest --preset amiga-68000
 ~~~
 
-The tests exercise both CPU builds when configured with Vamos. They cover help, line handling, search, JSON output, and stale task targeting. They do not exercise an interactive CON: window, native identify.library, or an actual reboot. Those require an AmigaOS emulator or machine. The sibling AmiNetXDuo project has tests/tools/hwshell.py for A1200 shell interaction and tools/amiberry-run.sh plus tools/emu-rig-lock.sh for isolated Amiberry runs. Validate the console UI and optional library on those rigs before shipping.
+The tests exercise both CPU builds when configured with Vamos. They cover help, line handling, search, JSON output, and stale task targeting. Interactive console rendering and CPU sampling require an AmigaOS machine or emulator with vertical blank interrupts. The sibling AmiNetXDuo project has tests/tools/hwshell.py for physical Amiga shell interaction and tools/amiberry-run.sh plus tools/emu-rig-lock.sh for isolated Amiberry runs.
 
 ## Prior art
 

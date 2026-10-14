@@ -30,7 +30,7 @@ void print_safe(std::string_view value) {
 
 } // namespace
 
-void print_task(const TaskRow &row, bool machine, LONG snapshot_number) {
+void print_task(const TaskRow &row, bool machine, LONG snapshot_number, LONG cpu_tenths) {
     if (!machine) {
         Printf("%08lx %6ld %-7s %-5s %3ld ", row.address, row.cli,
                row.type == NT_PROCESS ? "PROCESS" : "TASK", task_state(row.state),
@@ -38,6 +38,9 @@ void print_task(const TaskRow &row, bool machine, LONG snapshot_number) {
         print_safe(row.name.data());
         PutStr(" / ");
         print_safe(row.command.data());
+        if (cpu_tenths >= 0) {
+            Printf("  CPU=%ld.%ld%%", cpu_tenths / 10, cpu_tenths % 10);
+        }
         PutStr("\n  ");
         Printf("FLAGS=%02lx SIGALLOC=%08lx SIGWAIT=%08lx SIGRECV=%08lx ",
                static_cast<ULONG>(row.flags), row.signal_alloc, row.signal_wait,
@@ -61,6 +64,13 @@ void print_task(const TaskRow &row, bool machine, LONG snapshot_number) {
            "\"flags\":%lu,",
            row.address, row.cli, row.type == NT_PROCESS ? "process" : "task", task_state(row.state),
            static_cast<LONG>(row.priority), static_cast<ULONG>(row.flags));
+    if (snapshot_number > 0) {
+        if (cpu_tenths >= 0) {
+            Printf("\"cpu_tenths\":%ld,", cpu_tenths);
+        } else {
+            PutStr("\"cpu_tenths\":null,");
+        }
+    }
     if (row.cli > 0) {
         Printf("\"process_number\":%ld,", row.cli);
     } else {
