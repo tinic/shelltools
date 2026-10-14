@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <numeric>
 #include <span>
 #include <string_view>
 
@@ -190,70 +191,113 @@ constexpr unsigned help_page_rows(unsigned rows) {
     return rows >= 14 ? rows - 3 : 1;
 }
 constexpr unsigned details_height(unsigned rows) {
-    return rows >= 14 ? std::min(rows - 2, 28U) : 0;
+    return rows >= 14 ? std::min(rows - 4, 28U) : 0;
 }
 constexpr unsigned details_page_rows(unsigned rows) {
-    return rows >= 14 ? details_height(rows) - 3 : 1;
+    return rows >= 14 ? details_height(rows) - 2 : 1;
 }
+// Two help columns, the cpu bar column and the wide key bar from here up.
+constexpr unsigned wide_cols = 76;
 
-struct HelpRow {
-    std::string_view left;
-    std::string_view right;
+// Console renditions, each a whole SGR so none inherits another's pens.  Pens
+// 0-3 only, which every Workbench screen has: 0 grey, 1 black, 2 white, 3 blue
+// on the default palette.  Position and text carry the meaning; colour only
+// groups it.
+enum class Attr : UBYTE {
+    normal,
+    bold,
+    bar,      // title and key bars: white on blue
+    bar_key,  // a key on a bar
+    bar_dim,  // what the key does: black on blue
+    head,     // column headings, help sections: black on white
+    head_on,  // the sort column
+    select,   // the selected task: white on black
+    fill,     // a bar's filled cells: blue
+    fill_dark,
+    alert,    // PAUSED, messages, a missing task: reversed
+    count
+};
+
+constexpr std::array<const char *, static_cast<unsigned>(Attr::count)> renditions = {
+    "\2330m",          "\2330;1m",       "\2330;32;43m",  "\2330;1;32;43m",
+    "\2330;31;43m",    "\2330;31;42m",   "\2330;1;32;41m", "\2330;1;32;41m",
+    "\2330;43m",       "\2330;41m",      "\2330;1;7m"};
+
+struct HelpItem {
+    std::string_view key;
+    std::string_view text;
     bool section = false;
 };
 
-constexpr std::array wide_help = {
-    HelpRow{" MOVE / SELECT", " SORT", true},
-    HelpRow{"  j/k, Up/Down   One row", "  t  CPU       p  Priority", false},
-    HelpRow{"  n/u           One page", "  s  State     c  CLI    a  Name", false},
-    HelpRow{"", "", false},
-    HelpRow{" FILTER", " ACTIONS", true},
-    HelpRow{"  /             Filter name/command", "  Space  Pause / resume", false},
-    HelpRow{"  Backspace     Delete", "  b      Send Ctrl-C", false},
-    HelpRow{"  Enter / Esc   Finish filter", "  Enter  Task details; Esc closes", false},
-    HelpRow{"", "  h      Close help    q  Quit", false},
-    HelpRow{"", "", false},
-    HelpRow{" TABLE", " CPU", true},
-    HelpRow{"  T  Exec task  P  DOS process", "  CPU%  VBlank sample estimate", false},
-    HelpRow{"  TASK_ID  Exec address", "  --    Fewer than 10 samples", false},
-};
+constexpr HelpItem section(std::string_view title) {
+    return HelpItem{title, "", true};
+}
+
+constexpr std::array<std::array<HelpItem, 2>, 16> wide_help = {{
+    {section("MOVE / SELECT"), section("SORT")},
+    {HelpItem{"j/k Up/Down", "One row"}, HelpItem{"t", "CPU"}},
+    {HelpItem{"n/u", "One page"}, HelpItem{"p", "Priority"}},
+    {HelpItem{"Enter", "Task details"}, HelpItem{"s", "State"}},
+    {HelpItem{"Esc", "Close details"}, HelpItem{"c", "CLI"}},
+    {HelpItem{}, HelpItem{"a", "Name"}},
+    {section("FILTER"), HelpItem{}},
+    {HelpItem{"/", "Filter name/command"}, section("ACTIONS")},
+    {HelpItem{"Backspace", "Delete"}, HelpItem{"Space", "Pause / resume"}},
+    {HelpItem{"Enter/Esc", "Finish filter"}, HelpItem{"b", "Send Ctrl-C"}},
+    {HelpItem{}, HelpItem{"h", "Close help"}},
+    {section("TABLE"), HelpItem{"q", "Quit"}},
+    {HelpItem{"T", "Exec task"}, HelpItem{}},
+    {HelpItem{"P", "DOS process"}, section("CPU")},
+    {HelpItem{"TASK_ID", "Exec address"}, HelpItem{"CPU%", "VBlank sample estimate"}},
+    {HelpItem{}, HelpItem{"--", "Fewer than 10 samples"}},
+}};
 
 constexpr std::array narrow_help = {
-    HelpRow{" MOVE / SELECT", "", true},
-    HelpRow{"  j/k, arrows    One row", "", false},
-    HelpRow{"  n/u            One page", "", false},
-    HelpRow{" SORT", "", true},
-    HelpRow{"  t CPU  p Priority  s State", "", false},
-    HelpRow{"  c CLI  a Name", "", false},
-    HelpRow{" FILTER", "", true},
-    HelpRow{"  / Filter name/command", "", false},
-    HelpRow{"  Backspace Del  Enter/Esc Done", "", false},
-    HelpRow{" ACTIONS", "", true},
-    HelpRow{"  Space Pause   b Ctrl-C", "", false},
-    HelpRow{"  Enter Task details; Esc closes", "", false},
-    HelpRow{"  h Close help  q Quit", "", false},
-    HelpRow{" TABLE / CPU", "", true},
-    HelpRow{"  T Exec task  P DOS process", "", false},
-    HelpRow{"  CPU% VBlank; -- warming up", "", false},
+    section("MOVE / SELECT"),
+    HelpItem{"j/k, arrows", "One row"},
+    HelpItem{"n/u", "One page"},
+    HelpItem{"Enter", "Task details"},
+    HelpItem{"Esc", "Close details"},
+    section("SORT"),
+    HelpItem{"t  p", "CPU  Priority"},
+    HelpItem{"s  c  a", "State  CLI  Name"},
+    section("FILTER"),
+    HelpItem{"/", "Filter name/command"},
+    HelpItem{"Backspace", "Delete"},
+    HelpItem{"Enter/Esc", "Finish filter"},
+    section("ACTIONS"),
+    HelpItem{"Space", "Pause / resume"},
+    HelpItem{"b", "Send Ctrl-C"},
+    HelpItem{"h  q", "Close help  Quit"},
+    section("TABLE / CPU"),
+    HelpItem{"T  P", "Exec task  DOS process"},
+    HelpItem{"CPU%", "VBlank sample estimate"},
+    HelpItem{"--", "Fewer than 10 samples"},
 };
 
 constexpr unsigned help_count(unsigned cols) {
-    return static_cast<unsigned>(cols >= 80 ? wide_help.size() : narrow_help.size());
+    return static_cast<unsigned>(cols >= wide_cols ? wide_help.size() : narrow_help.size());
 }
-
-enum class Tone : UBYTE { normal, accent, positive, warm, warning, banner };
 
 struct Line {
     std::array<char, max_cols> data = {};
+    std::array<Attr, max_cols> attr = {};
     unsigned length = 0;
-    unsigned limit;
+    unsigned limit = 0;
+    Attr pen = Attr::normal;
 
+    constexpr Line() = default;
     constexpr explicit Line(unsigned cols, bool full_width = false)
         : limit(full_width ? std::min(cols, max_cols)
                            : (cols > 1 ? std::min(cols - 1, max_cols - 1) : 0)) {}
 
+    constexpr Line &use(Attr a) {
+        pen = a;
+        return *this;
+    }
     constexpr void character(char c) {
         if (length < limit) {
+            attr[length] = pen;
             data[length++] = c;
         }
     }
@@ -268,6 +312,8 @@ struct Line {
             character(' ');
         }
     }
+    constexpr void fill() { spaces(limit - length); }
+    constexpr unsigned room() const { return limit - length; }
     constexpr void field(std::string_view s, unsigned width) {
         unsigned n = 0;
         for (const char byte : s) {
@@ -282,9 +328,9 @@ struct Line {
     }
     constexpr void right_field(std::string_view s, unsigned width) {
         if (width > s.size()) {
-            spaces(width - s.size());
+            spaces(static_cast<unsigned>(width - s.size()));
         }
-        field(s, std::min<unsigned>(width, s.size()));
+        field(s, std::min<unsigned>(width, static_cast<unsigned>(s.size())));
     }
     constexpr std::span<const char> view() const { return {data.data(), length}; }
     constexpr void number(ULONG value, unsigned width, bool negative) {
@@ -318,14 +364,48 @@ struct Line {
             character(digits[(value >> shift) & 15]);
         }
     }
+    // A key and what it does, on a bar; nothing when it does not fit whole.
+    constexpr bool key(std::string_view name, std::string_view action) {
+        if (name.size() + action.size() + 3 > room()) {
+            return false;
+        }
+        use(Attr::bar_key).text(name);
+        use(Attr::bar_dim).character(' ');
+        text(action);
+        spaces(2);
+        return true;
+    }
+    // `label` then `value` in bold, or nothing when both do not fit whole.
+    constexpr void pair(std::string_view label, std::string_view value) {
+        if (label.size() + value.size() > room()) {
+            limit = length;
+            return;
+        }
+        use(Attr::normal).text(label);
+        use(Attr::bold).text(value);
+        use(Attr::normal);
+    }
 };
 
+// `used` of `total` as `width` cells: filled cells, then middle dots.
+constexpr void bar(Line &line, ULONG used, ULONG total, unsigned width, Attr filled) {
+    unsigned cells = 0;
+    if (total && used) {
+        while (total > 0xffffUL) {
+            total >>= 1;
+            used >>= 1;
+        }
+        cells = static_cast<unsigned>(std::min<ULONG>(width, (used * width + total - 1) / total));
+    }
+    line.use(filled).spaces(cells);
+    line.use(Attr::normal);
+    while (cells++ < width) {
+        line.character('\267'); // ISO-8859-1 middle dot
+    }
+}
+
 struct Panel {
-    struct Row {
-        std::array<char, max_cols> text = {};
-        Tone tone = Tone::normal;
-    };
-    std::array<Row, 28> rows = {};
+    std::array<Line, 28> rows = {};
     unsigned top = 0;
     unsigned left = 0;
     unsigned width = 0;
@@ -336,134 +416,164 @@ struct Panel {
         width = std::min(screen_cols - 4, 104U);
         top = (screen_rows - height) / 2 + 1;
         left = (screen_cols - width) / 2;
-        for (Row &row : std::span{rows}.first(height)) {
-            std::ranges::fill(std::span{row.text}.first(width), ' ');
-            row.text.front() = '|';
-            row.text[width - 1] = '|';
-            row.tone = Tone::normal;
+        for (Line &row : std::span{rows}.first(height)) {
+            row = Line(width, true);
+            row.use(Attr::fill).character(' ');
+            row.use(Attr::normal).spaces(width - 2);
+            row.use(Attr::fill).character(' ');
         }
     }
+
+    // Inside the edges with a space each side.
+    constexpr unsigned inner() const { return width - 4; }
 
     void content(unsigned index, const Line &line) {
-        std::ranges::copy(line.view(), rows[index].text.begin() + 1);
+        Line &row = rows[index];
+        const unsigned n = std::min(line.length, inner());
+        std::ranges::copy(std::span{line.data}.first(n), row.data.begin() + 2);
+        std::ranges::copy(std::span{line.attr}.first(n), row.attr.begin() + 2);
     }
 
-    void border(unsigned index, std::string_view title) {
-        Line line(width, true);
-        line.text("+- ");
-        line.text(title);
-        line.character(' ');
-        while (line.length < width - 1) {
-            line.character('-');
+    void set(unsigned index, const Line &line) { rows[index] = line; }
+};
+
+// A frame's output, written with one Write() so console.device never sees a
+// control sequence split between two writes and the window does not flicker.
+struct Frame {
+    std::array<char, 4096> data = {};
+    unsigned used = 0;
+    bool lost = false; // a write failed: the screen no longer shows the cache
+
+    void flush() {
+        if (!used) {
+            return;
         }
-        line.character('+');
-        std::ranges::copy(line.view(), rows[index].text.begin());
-        rows[index].tone = Tone::banner;
+        Flush(Output());
+        const char *at = data.data();
+        LONG left = static_cast<LONG>(used);
+        while (left > 0) {
+            const LONG wrote = Write(Output(), at, left);
+            if (wrote <= 0) {
+                lost = true;
+                break;
+            }
+            at += wrote;
+            left -= wrote;
+        }
+        used = 0;
+    }
+    void bytes(std::span<const char> text) {
+        if (used + text.size() > data.size()) {
+            flush();
+        }
+        for (const char c : text.first(std::min<std::size_t>(text.size(), data.size()))) {
+            data[used++] = c;
+        }
+    }
+    void put(std::string_view text) { bytes(std::span<const char>{text.data(), text.size()}); }
+    void row(unsigned number) {
+        std::array<char, 8> s = {'\233'};
+        unsigned n = 1;
+        if (number >= 100) {
+            s[n++] = static_cast<char>('0' + number / 100);
+        }
+        if (number >= 10) {
+            s[n++] = static_cast<char>('0' + number / 10 % 10);
+        }
+        s[n++] = static_cast<char>('0' + number % 10);
+        s[n++] = ';';
+        s[n++] = '1';
+        s[n++] = 'H';
+        bytes(std::span<const char>{s.data(), n});
     }
 };
 
-struct Screen {
-    static constexpr std::array<char, max_cols> blank_cells = [] {
-        std::array<char, max_cols> cells{};
-        cells.fill(' ');
-        return cells;
-    }();
+Frame frame;
 
+const Line blank;
+
+struct Screen {
     std::array<std::array<char, max_cols>, max_rows> previous = {};
+    std::array<std::array<Attr, max_cols>, max_rows> previous_attr = {};
     std::array<unsigned, max_rows> previous_length = {};
-    std::array<Tone, max_rows> previous_tone = {};
-    std::array<Tone, max_rows> previous_panel_tone = {};
-    std::array<bool, max_rows> previous_panel = {};
     std::array<bool, max_rows> valid = {};
     const Panel *panel = nullptr;
     unsigned rows = 0;
     unsigned cols = 0;
 
     void size(unsigned height, unsigned width) {
+        if (frame.lost) {
+            // Part of an earlier frame never arrived: redraw every row.
+            frame.lost = false;
+            valid.fill(false);
+        }
         if (height == rows && width == cols) {
             return;
         }
         rows = height;
         cols = width;
         valid.fill(false);
-        PutStr("\2330m\233 p\233H\233J");
+        // Cursor off, no wrap or scroll, then a form feed: console.device
+        // resets the bitplanes it renders and clears through only on a full
+        // clear, so a CSI J alone can leave a coloured cell's other planes.
+        frame.put("\2330m\2330 p\233?7l\233>1l\f");
     }
 
-    static void segment(std::span<const char> text, Tone tone) {
-        if (text.empty()) {
-            return;
+    static void emit(const Line &text) {
+        Attr current = Attr::normal;
+        unsigned start = 0;
+        while (start < text.length) {
+            unsigned end = start + 1;
+            while (end < text.length && text.attr[end] == text.attr[start]) {
+                ++end;
+            }
+            if (text.attr[start] != current) {
+                current = text.attr[start];
+                frame.put(renditions[static_cast<unsigned>(current)]);
+            }
+            frame.bytes(std::span<const char>{text.data.data() + start, end - start});
+            start = end;
         }
-        switch (tone) {
-        case Tone::normal:
-            break;
-        case Tone::accent:
-            PutStr("\23331;42m");
-            break;
-        case Tone::positive:
-            PutStr("\23331;45m");
-            break;
-        case Tone::warm:
-            PutStr("\23331;47m");
-            break;
-        case Tone::warning:
-            PutStr("\23331;44m");
-            break;
-        case Tone::banner:
-            PutStr("\23331;43m");
-            break;
-        }
-        shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
-        if (tone != Tone::normal) {
-            PutStr("\2330m");
+        if (current != Attr::normal) {
+            frame.put(renditions[0]);
         }
     }
 
-    void line(unsigned row, const Line &content, Tone tone = Tone::normal) {
+    void line(unsigned row, const Line &content) {
         if (row == 0 || row > rows) {
             return;
         }
-        const Panel::Row *cover = panel && row >= panel->top && row < panel->top + panel->height
-                                      ? &panel->rows[row - panel->top]
-                                      : nullptr;
-        Line composed = content;
+        const bool beside = panel && row > 1 && row < rows;
+        const Line *cover = beside ? (row >= panel->top && row < panel->top + panel->height
+                                          ? &panel->rows[row - panel->top]
+                                          : &blank)
+                                   : nullptr;
+        static Line composed;
+        composed = content;
         if (cover) {
+            // The table around the overlay is left blank.
             composed = Line(cols, true);
-            composed.spaces(composed.limit);
-            std::ranges::copy(content.view(), composed.data.begin());
-            std::ranges::copy(std::span{cover->text}.first(panel->width),
-                              composed.data.begin() + panel->left);
+            composed.fill();
+            const unsigned n = std::min(cover->length, composed.limit - panel->left);
+            std::ranges::copy(std::span{cover->data}.first(n), composed.data.begin() + panel->left);
+            std::ranges::copy(std::span{cover->attr}.first(n), composed.attr.begin() + panel->left);
         }
         const unsigned index = row - 1;
-        const bool same =
-            valid[index] && previous_tone[index] == tone &&
-            previous_panel[index] == (cover != nullptr) &&
-            (!cover || previous_panel_tone[index] == cover->tone) &&
-            previous_length[index] == composed.length &&
-            std::ranges::equal(composed.view(), std::span{previous[index].data(), composed.length});
-        if (same) {
+        const unsigned n = composed.length;
+        if (valid[index] && previous_length[index] == n &&
+            std::ranges::equal(composed.view(), std::span{previous[index]}.first(n)) &&
+            std::ranges::equal(std::span{composed.attr}.first(n),
+                               std::span{previous_attr[index]}.first(n))) {
             return;
         }
-        Printf("\233%lu;1H", static_cast<ULONG>(row));
-        const auto text = composed.view();
-        if (cover) {
-            segment(text.first(panel->left), tone);
-            segment(text.subspan(panel->left, panel->width), cover->tone);
-            segment(text.subspan(panel->left + panel->width), tone);
-        } else {
-            segment(text, tone);
-        }
-        if (composed.length < cols) {
-            if (tone == Tone::normal) {
-                PutStr("\233K");
-            } else {
-                segment(std::span{blank_cells}.first(cols - composed.length), tone);
-            }
+        frame.row(row);
+        emit(composed);
+        if (n < cols) {
+            frame.put("\233K");
         }
         std::ranges::copy(composed.view(), previous[index].begin());
-        previous_length[index] = composed.length;
-        previous_tone[index] = tone;
-        previous_panel[index] = cover != nullptr;
-        previous_panel_tone[index] = cover ? cover->tone : Tone::normal;
+        std::ranges::copy(std::span{composed.attr}.first(n), previous_attr[index].begin());
+        previous_length[index] = n;
         valid[index] = true;
     }
 };
@@ -514,24 +624,21 @@ void prepare(View &view) {
     }
 }
 
-constexpr void memory_bar(Line &line, std::string_view label, ULONG free, ULONG total) {
-    line.field(label, 4);
-    line.character(' ');
-    line.character('\253'); // ISO-8859-1 left guillemet
+constexpr unsigned meter_width(unsigned cols) {
+    return cols >= 72 ? 32 : (cols >= 52 ? cols - 40 : 12);
+}
+
+constexpr void memory_meter(Line &line, std::string_view label, ULONG free, ULONG total,
+                            Attr filled) {
     const ULONG used = total > free ? total - free : 0;
-    const unsigned width = line.limit >= 55 ? 20 : 10;
-    const ULONG step = total / width + (total % width != 0);
-    unsigned filled = step ? used / step : 0;
-    if (filled > width) {
-        filled = width;
-    }
-    for (unsigned i = 0; i < width; ++i) {
-        line.character(i < filled ? '#' : '\267');
-    }
-    line.character('\273'); // ISO-8859-1 right guillemet
+    line.use(Attr::normal).text("  ");
+    line.field(label, 6);
+    bar(line, used, total, meter_width(line.limit + 1), filled);
     line.character(' ');
-    line.decimal(used / 1024);
-    line.text("K / ");
+    line.use(Attr::bold);
+    line.decimal(used / 1024, 6);
+    line.character('K');
+    line.use(Attr::normal).text(" of ");
     line.decimal(total / 1024);
     line.character('K');
 }
@@ -573,22 +680,29 @@ struct DetailWriter {
 
     DetailWriter(Panel &window, unsigned offset) : panel(window), scroll(offset) {}
 
-    constexpr unsigned width() const { return panel.width - 2; }
+    constexpr unsigned width() const { return panel.inner(); }
 
     void line(const Line &text) {
-        if (count >= scroll && count - scroll < panel.height - 3) {
+        if (count >= scroll && count - scroll < panel.height - 2) {
             panel.content(count - scroll + 1, text);
         }
         ++count;
     }
 
-    void field(std::string_view label, std::string_view value) {
+    Line labelled(std::string_view label) const {
+        Line text(width(), true);
+        text.field(label, 12);
+        text.use(Attr::bold);
+        return text;
+    }
+
+    void field(std::string_view label, std::string_view value, Attr tone = Attr::bold) {
         if (value.empty()) {
             value = "-";
         }
         while (!value.empty()) {
-            Line text(width(), true);
-            text.field(label, 12);
+            Line text = labelled(label);
+            text.use(tone);
             const auto part = std::min<std::size_t>(value.size(), width() - 12);
             text.text(std::string_view{value.data(), part});
             line(text);
@@ -598,15 +712,13 @@ struct DetailWriter {
     }
 
     void decimal(std::string_view label, ULONG value) {
-        Line text(width(), true);
-        text.field(label, 12);
+        Line text = labelled(label);
         text.decimal(value);
         line(text);
     }
 
     void hex(std::string_view label, ULONG value) {
-        Line text(width(), true);
-        text.field(label, 12);
+        Line text = labelled(label);
         text.hex8(value);
         line(text);
     }
@@ -616,8 +728,12 @@ unsigned fill_details(const View &view, Panel &panel) {
     const TaskDetails &details = view.details;
     const TaskRow &row = details.row;
     DetailWriter writer{panel, details.scroll};
-    writer.field("STATUS", !details.present ? "MISSING: last captured values"
-                                            : (view.paused ? "PAUSED" : "LIVE"));
+    if (!details.present) {
+        writer.field("STATUS", "MISSING: last captured values", Attr::alert);
+    } else {
+        writer.field("STATUS", view.paused ? "PAUSED" : "LIVE", view.paused ? Attr::alert
+                                                                          : Attr::bold);
+    }
     writer.field("NAME", row.name.data());
     writer.field("TYPE", row.type == NT_PROCESS ? "P: DOS process" : "T: Exec task");
     writer.hex("TASK ID", row.address);
@@ -634,23 +750,25 @@ unsigned fill_details(const View &view, Panel &panel) {
         }
         writer.field("ARGUMENTS", arguments);
     }
-    Line priority(writer.width(), true);
-    priority.field("PRIORITY", 12);
+    Line priority = writer.labelled("PRIORITY");
     priority.signed_decimal(row.priority);
-    priority.text("  STATE ");
-    priority.text(shelltools::task_state(row.state));
+    priority.use(Attr::normal).text("  STATE ");
+    priority.use(Attr::bold).text(shelltools::task_state(row.state));
     writer.line(priority);
-    Line cpu(writer.width(), true);
-    cpu.field("CPU%", 12);
+    Line cpu = writer.labelled("CPU%");
     cpu_field(cpu, details.cpu_tenths, details.samples);
+    if (details.samples && cpu.room() > 4) {
+        cpu.character(' ');
+        cpu.character(' ');
+        bar(cpu, details.cpu_tenths, 1000, std::min(cpu.room(), 20U), Attr::fill);
+    }
     writer.line(cpu);
     writer.decimal("STACK BYTES",
                    row.stack_upper >= row.stack_lower ? row.stack_upper - row.stack_lower : 0);
-    Line bounds(writer.width(), true);
-    bounds.field("STACK RANGE", 12);
+    Line bounds = writer.labelled("STACK RANGE");
     bounds.hex8(row.stack_lower);
-    bounds.character('-');
-    bounds.hex8(row.stack_upper);
+    bounds.use(Attr::normal).character('-');
+    bounds.use(Attr::bold).hex8(row.stack_upper);
     writer.line(bounds);
     writer.hex("SAVED SP", row.stack_pointer);
     writer.hex("SIG ALLOC", row.signal_alloc);
@@ -658,14 +776,44 @@ unsigned fill_details(const View &view, Panel &panel) {
     writer.hex("SIG RECV", row.signal_received);
     writer.hex("TASK FLAGS", row.flags);
     if (row.type == NT_PROCESS) {
-        Line stack(writer.width(), true);
-        stack.field("PROC STACK", 12);
+        Line stack = writer.labelled("PROC STACK");
         stack.signed_decimal(row.process_stack_size);
         writer.line(stack);
         writer.hex("PROC FLAGS", static_cast<ULONG>(row.process_flags));
     }
-    writer.field("NOTE", "Saved SP may be stale");
+    writer.field("NOTE", "Saved SP may be stale", Attr::normal);
     return writer.count;
+}
+
+struct KeyItem {
+    std::string_view key;
+    std::string_view action;
+    unsigned rank; // 0 always; higher ranks go first when the bar is short
+};
+
+// A key bar: as many keys as fit, the lowest ranks first, shown in order.
+void key_bar(Line &line, std::span<const KeyItem> items) {
+    line.use(Attr::bar).character(' ');
+    unsigned room = line.room();
+    unsigned shown = 0; // ranks up to this one fit
+    for (unsigned rank = 0; rank < 4; ++rank) {
+        const unsigned need = std::accumulate(
+            items.begin(), items.end(), 0U, [rank](unsigned sum, const KeyItem &item) {
+                return item.rank <= rank
+                           ? sum + static_cast<unsigned>(item.key.size() + item.action.size() + 3)
+                           : sum;
+            });
+        if (need > room) {
+            break;
+        }
+        shown = rank + 1;
+    }
+    for (const KeyItem &item : items) {
+        if (item.rank < shown) {
+            line.key(item.key, item.action);
+        }
+    }
+    line.use(Attr::bar).fill();
 }
 
 void render_details(View &view, Panel &panel) {
@@ -680,18 +828,23 @@ void render_details(View &view, Panel &panel) {
         panel.size(view.rows, view.cols);
         fill_details(view, panel);
     }
-    panel.border(0, "TASK DETAILS");
-    Line footer(panel.width - 2, true);
-    footer.text(panel.width >= 60 ? "Enter/Esc close  j/k scroll  n/u page"
-                                  : "Enter/Esc close  j/k scroll");
-    panel.content(panel.height - 2, footer);
-    Line range(panel.width - 2, true);
+    Line range(panel.width, true);
     range.decimal(details.scroll + 1);
     range.character('-');
     range.decimal(std::min(details.lines, details.scroll + page));
     range.character('/');
     range.decimal(details.lines);
-    panel.border(panel.height - 1, std::string_view{range.data.data(), range.length});
+    range.character(' ');
+    Line title(panel.width, true);
+    title.use(Attr::bar_key).text(" TASK DETAILS ");
+    title.use(Attr::bar).spaces(title.room() > range.length ? title.room() - range.length : 0);
+    title.text(std::string_view{range.data.data(), range.length});
+    panel.set(0, title);
+    Line keys(panel.width, true);
+    static constexpr std::array<KeyItem, 3> detail_keys = {
+        {{"Enter/Esc", "close", 0}, {"j/k", "scroll", 1}, {"n/u", "page", 2}}};
+    key_bar(keys, detail_keys);
+    panel.set(panel.height - 1, keys);
 }
 
 constexpr bool same_name(const char *live, std::string_view saved) {
@@ -725,47 +878,104 @@ bool break_selected(const TaskRow &row) {
     return sent;
 }
 
+// The bar across the top: name and what it counts on the left, `right` at the
+// right edge when both fit.
+void title_bar(Line &line, std::string_view what, const Line &right) {
+    line.use(Attr::bar_key).text(" WatchTasks ");
+    line.use(Attr::bar).text(what);
+    if (line.room() >= right.length) {
+        line.spaces(line.room() - right.length);
+        std::ranges::copy(right.view(), line.data.begin() + line.length);
+        std::ranges::copy(std::span{right.attr}.first(right.length),
+                          line.attr.begin() + line.length);
+        line.length += right.length;
+    }
+    line.use(Attr::bar).fill();
+}
+
+void help_item(Line &line, const HelpItem &item, unsigned width, unsigned key_width) {
+    const unsigned start = line.length;
+    if (item.section) {
+        line.use(Attr::normal).character(' ');
+        line.use(Attr::head).character(' ');
+        line.text(item.key);
+        line.character(' ');
+    } else if (!item.key.empty()) {
+        line.use(Attr::normal).text("   ");
+        line.use(Attr::bold).field(item.key, key_width);
+        line.use(Attr::normal).text(item.text);
+    }
+    line.use(Attr::normal);
+    if (line.length < start + width) {
+        line.spaces(start + width - line.length);
+    }
+}
+
 void render_help(View &view, Screen &screen) {
     const unsigned page = help_page_rows(view.rows);
     const unsigned count = help_count(view.cols);
     view.help_scroll = std::min(view.help_scroll, count > page ? count - page : 0);
+    const bool wide = view.cols >= wide_cols;
 
+    Line range(view.cols, true);
+    range.use(Attr::bar).text("Help ");
+    range.decimal(view.help_scroll + 1);
+    range.character('-');
+    range.decimal(std::min(count, view.help_scroll + page));
+    range.character('/');
+    range.decimal(count);
+    range.character(' ');
     Line title(view.cols, true);
-    title.text("WatchTasks  HELP  ");
-    title.decimal(view.help_scroll + 1);
-    title.character('-');
-    title.decimal(std::min(count, view.help_scroll + page));
-    title.character('/');
-    title.decimal(count);
-    title.spaces(title.limit - title.length);
-    screen.line(1, title, Tone::banner);
+    title_bar(title, "", range);
+    screen.line(1, title);
     screen.line(2, Line(view.cols));
 
     for (unsigned i = 0; i < page; ++i) {
         const unsigned index = view.help_scroll + i;
-        if (index >= count) {
-            screen.line(3 + i, Line(view.cols));
-            continue;
+        Line line(view.cols);
+        if (index < count) {
+            if (wide) {
+                help_item(line, wide_help[index][0], view.cols / 2, 13);
+                help_item(line, wide_help[index][1], line.room(), 7);
+            } else {
+                help_item(line, narrow_help[index], line.room(), 12);
+            }
         }
-        const HelpRow &entry = view.cols >= 80 ? wide_help[index] : narrow_help[index];
-        Line line(view.cols, entry.section);
-        if (view.cols >= 80) {
-            line.field(entry.left, view.cols / 2);
-            line.text(entry.right);
-        } else {
-            line.text(entry.left);
-        }
-        if (entry.section) {
-            line.spaces(line.limit - line.length);
-        }
-        screen.line(3 + i, line, entry.section ? Tone::banner : Tone::normal);
+        screen.line(3 + i, line);
     }
 
-    Line footer(view.cols, true);
-    footer.text(" j/k scroll  n/u page  h back  q quit");
-    footer.spaces(footer.limit - footer.length);
-    screen.line(view.rows, footer, Tone::banner);
-    Flush(Output());
+    Line footer(view.cols);
+    static constexpr std::array<KeyItem, 4> help_keys = {
+        {{"j/k", "scroll", 1}, {"n/u", "page", 2}, {"h", "back", 0}, {"q", "quit", 0}}};
+    key_bar(footer, help_keys);
+    screen.line(view.rows, footer);
+    frame.flush();
+}
+
+constexpr std::string_view sort_name(char sort) {
+    switch (sort) {
+    case 'p':
+        return "Priority";
+    case 's':
+        return "State";
+    case 'c':
+        return "CLI";
+    case 'a':
+        return "Name";
+    default:
+        return "CPU";
+    }
+}
+
+// A column heading, in the sort colour when the table is sorted by it.
+void heading(Line &line, std::string_view text, unsigned width, bool right, bool sorted) {
+    line.use(sorted ? Attr::head_on : Attr::head);
+    if (right) {
+        line.right_field(text, width);
+    } else {
+        line.field(text, width);
+    }
+    line.use(Attr::head).character(' ');
 }
 
 void render(View &view, Screen &screen, LONG number) {
@@ -775,7 +985,7 @@ void render(View &view, Screen &screen, LONG number) {
         Line line(view.cols);
         line.text("WatchTasks: resize window (40x14 minimum)");
         screen.line(1, line);
-        Flush(Output());
+        frame.flush();
         return;
     }
     if (view.help) {
@@ -799,170 +1009,218 @@ void render(View &view, Screen &screen, LONG number) {
             ++waiting;
         }
     }
-    Line title(view.cols, true);
-    title.text("WatchTasks  #");
-    title.decimal(static_cast<ULONG>(number));
-    title.text("  tasks ");
-    title.decimal(view.snapshot.count);
-    title.text("  sort ");
-    title.character(view.sort);
+    const bool wide = view.cols >= wide_cols;
+    const bool compact = view.cols < 60;
+
+    // Title: counts on the left; sort, state and snapshot number on the right.
+    Line counts(view.cols, true);
+    counts.use(Attr::bar);
+    counts.text(" ");
+    counts.decimal(view.snapshot.count);
+    counts.text(" tasks");
+    if (!compact) {
+        counts.text("  Run ");
+        counts.decimal(running);
+        counts.text("  Ready ");
+        counts.decimal(ready);
+        counts.text("  Wait ");
+        counts.decimal(waiting);
+    }
+    Line right(view.cols, true);
     if (view.paused) {
-        title.text("  PAUSED");
+        right.use(Attr::bar_key).text("PAUSED  ");
     }
     if (view.snapshot.truncated) {
-        title.text("  TRUNCATED");
+        right.use(Attr::bar_key).text("TRUNCATED  ");
     }
-    title.spaces(title.limit - title.length);
-    screen.line(1, title, Tone::banner);
-    Line chip(view.cols);
-    memory_bar(chip, "CHIP", view.chip_free, view.chip_total);
-    screen.line(2, chip, Tone::positive);
-    Line fast(view.cols);
-    memory_bar(fast, "FAST", view.fast_free, view.fast_total);
-    screen.line(3, fast, Tone::accent);
-    Line status(view.cols);
-    status.text("RUN ");
-    status.decimal(running);
-    status.text("  READY ");
-    status.decimal(ready);
-    status.text("  WAIT ");
-    status.decimal(waiting);
-    status.text("  CPU~ ");
+    right.use(Attr::bar).text("Sort ");
+    right.use(Attr::bar_key).text(sort_name(view.sort));
+    if (!compact) {
+        right.use(Attr::bar).text("  #");
+        right.decimal(static_cast<ULONG>(number));
+    }
+    right.use(Attr::bar).character(' ');
+    Line title(view.cols, true);
+    title_bar(title, std::string_view{counts.data.data(), counts.length}, right);
+    screen.line(1, title);
+
+    // The machine: CPU busy, then chip and fast memory.
+    Line cpu(view.cols);
+    cpu.text("  ");
+    cpu.field("CPU", 6);
+    bar(cpu, view.cpu.samples ? view.cpu.busy_tenths : 0, 1000, meter_width(view.cols),
+        Attr::fill);
+    cpu.character(' ');
+    cpu.use(Attr::bold);
     if (view.cpu.samples) {
-        status.decimal(view.cpu.busy_tenths / 10);
-        status.character('.');
-        status.decimal(view.cpu.busy_tenths % 10);
-        status.character('%');
+        cpu.decimal(view.cpu.busy_tenths / 10, 5);
+        cpu.character('.');
+        cpu.decimal(view.cpu.busy_tenths % 10);
+        cpu.character('%');
     } else {
-        status.text("--.-%");
+        cpu.text("  --.-%");
     }
-    status.text("  SAMPLES ");
-    status.decimal(view.cpu.samples);
-    screen.line(4, status, view.paused ? Tone::warning : Tone::normal);
+    if (cpu.room() >= 13) {
+        cpu.use(Attr::normal).text("  ");
+        cpu.decimal(view.cpu.samples);
+        cpu.text(" samples");
+    }
+    screen.line(2, cpu);
+    Line chip(view.cols);
+    memory_meter(chip, "Chip", view.chip_free, view.chip_total, Attr::fill);
+    screen.line(3, chip);
+    Line fast(view.cols);
+    memory_meter(fast, "Fast", view.fast_free, view.fast_total, Attr::fill_dark);
+    screen.line(4, fast);
+
+    // The filter while it is set or edited, and the last action's message.
     Line rule(view.cols);
-    rule.text("-- Filter: ");
     const std::string_view filter{view.filter.data()};
     const std::string_view message{view.editing ? "" : view.message};
-    const unsigned room = rule.limit - rule.length;
-    const unsigned reserved = static_cast<unsigned>(std::min<std::size_t>(
-        room, (view.editing ? 1U : 0U) + (message.empty() ? 0U : message.size() + 2)));
-    const unsigned filter_room = room - reserved;
-    std::string_view shown_filter = filter;
-    if (shown_filter.size() > filter_room) {
-        // substr() pulls in libstdc++'s exception runtime on this toolchain.
-        shown_filter.remove_prefix(shown_filter.size() - filter_room);
+    if (view.editing || !filter.empty()) {
+        rule.use(Attr::normal).text("  ");
+        rule.use(view.editing ? Attr::head : Attr::normal).text(" Filter ");
+        rule.use(Attr::normal).character(' ');
+        const unsigned reserved = static_cast<unsigned>(std::min<std::size_t>(
+            rule.room(), (view.editing ? 1U : 0U) + (message.empty() ? 0U : message.size() + 4)));
+        std::string_view shown_filter = filter;
+        if (shown_filter.size() > rule.room() - reserved) {
+            // substr() pulls in libstdc++'s exception runtime on this toolchain.
+            shown_filter.remove_prefix(shown_filter.size() - (rule.room() - reserved));
+        }
+        rule.use(Attr::bold).text(shown_filter);
+        if (view.editing) {
+            rule.use(Attr::alert).character(' '); // the cursor
+        }
     }
-    rule.text(shown_filter);
-    if (view.editing) {
-        rule.character('_');
-    } else if (!message.empty()) {
-        rule.text("  ");
+    if (!message.empty() && rule.room() > message.size() + 2) {
+        rule.use(Attr::normal).text("  ");
+        rule.use(Attr::alert).character(' ');
         rule.text(message);
-    }
-    if (rule.length < rule.limit) {
         rule.character(' ');
     }
-    while (rule.length < rule.limit) {
-        rule.character('-');
-    }
-    screen.line(5, rule, view.editing ? Tone::positive : Tone::warm);
-    Line headings(view.cols);
-    const unsigned page = task_page_rows(view.rows);
-    const bool compact = view.cols < 60;
-    headings.spaces(2);
-    headings.text("T/P ");
-    if (!compact) {
-        headings.field("TASK_ID", 8);
-        headings.character(' ');
-        headings.right_field("CLI", 5);
-        headings.character(' ');
-        headings.right_field("PRI", 4);
-        headings.character(' ');
-    }
-    headings.right_field("CPU%", 6);
-    headings.character(' ');
-    if (!compact) {
-        headings.field("STATE", 5);
-        headings.character(' ');
-    }
-    headings.text("NAME");
-    screen.line(6, headings, Tone::accent);
+    screen.line(5, rule);
 
+    // Column headings, a strip across the window.
+    const unsigned cpu_bar = wide ? 10 : 0;
+    Line headings(view.cols, true);
+    headings.use(Attr::head).text("   T  ");
+    if (!compact) {
+        heading(headings, "TASK_ID", 8, false, false);
+        heading(headings, "CLI", 4, true, view.sort == 'c');
+        heading(headings, "PRI", 4, true, view.sort == 'p');
+    }
+    heading(headings, "CPU%", 6, true, view.sort == 't');
+    if (cpu_bar) {
+        headings.spaces(cpu_bar + 1);
+    }
+    if (!compact) {
+        heading(headings, "STATE", 5, false, view.sort == 's');
+    }
+    heading(headings, "NAME", 4, false, view.sort == 'a');
+    headings.use(Attr::head).fill();
+    screen.line(6, headings);
+
+    const unsigned page = task_page_rows(view.rows);
     for (unsigned i = 0; i < page; ++i) {
         const unsigned pos = view.scroll + i;
         Line line(view.cols, true);
         if (pos >= view.shown) {
-            line.spaces(line.limit);
             screen.line(7 + i, line);
             continue;
         }
         const unsigned task_index = view.order[pos];
         const TaskRow &row = view.snapshot.rows[task_index];
-        line.character(pos == view.selected ? '>' : ' ');
-        line.character(' ');
-        line.character(' ');
-        line.character(row.type == NT_PROCESS ? 'P' : 'T');
+        const bool chosen = pos == view.selected;
+        const Attr base = chosen ? Attr::select : Attr::normal;
+        line.use(base);
+        line.character(chosen ? '>' : ' ');
         line.spaces(2);
+        line.use(chosen ? Attr::select : Attr::bold).character(row.type == NT_PROCESS ? 'P' : 'T');
+        line.use(base).spaces(2);
         if (!compact) {
             line.hex8(row.address);
             line.character(' ');
-            line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0, 5);
+            if (row.cli > 0) {
+                line.decimal(static_cast<ULONG>(row.cli), 4);
+            } else {
+                line.right_field("-", 4);
+            }
             line.character(' ');
             line.signed_decimal(row.priority, 4);
             line.character(' ');
         }
+        line.use(chosen ? Attr::select : Attr::bold);
         cpu_field(line, view.cpu.tenths[task_index], view.cpu.samples);
-        line.character(' ');
+        line.use(base).character(' ');
+        if (cpu_bar) {
+            const unsigned tenths = view.cpu.samples ? view.cpu.tenths[task_index] : 0;
+            unsigned cells = (tenths * cpu_bar + 999) / 1000;
+            cells = std::min(cells, cpu_bar);
+            line.use(Attr::fill).spaces(cells);
+            line.use(base).spaces(cpu_bar - cells + 1);
+        }
         if (!compact) {
             line.field(shelltools::task_state(row.state), 5);
             line.character(' ');
         }
-        line.text(row.name.data());
-        line.spaces(line.limit - line.length);
-        screen.line(7 + i, line, pos == view.selected ? Tone::banner : Tone::normal);
+        line.use(chosen ? Attr::select : Attr::normal).text(row.name.data());
+        if (chosen) {
+            line.fill();
+        }
+        screen.line(7 + i, line);
     }
+
+    // The selected task in two lines, labels plain and values bold.
     Line detail(view.cols);
     Line signals(view.cols);
     if (view.shown) {
         const TaskRow &row = view.snapshot.rows[view.order[view.selected]];
-        detail.text("SELECT ");
-        detail.decimal(view.selected + 1);
-        detail.character('/');
-        detail.decimal(view.shown);
-        detail.text("  ");
-        detail.text(row.type == NT_PROCESS ? "PROCESS" : "TASK");
-        detail.text("  TASK ");
-        detail.hex8(row.address);
-        detail.text("  PRI ");
-        detail.signed_decimal(row.priority);
-        detail.text("  CLI ");
-        detail.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
-        if (row.command.front() != '\0') {
-            detail.text("  CMD ");
-            detail.text(row.command.data());
+        Line n(20, true);
+        n.decimal(view.selected + 1);
+        n.character('/');
+        n.decimal(view.shown);
+        detail.pair("  Task ", std::string_view{n.data.data(), n.length});
+        detail.pair("  ", row.type == NT_PROCESS ? "Process" : "Exec task");
+        Line id(20, true);
+        id.hex8(row.address);
+        detail.pair("  ID ", std::string_view{id.data.data(), id.length});
+        Line pri(20, true);
+        pri.signed_decimal(row.priority);
+        detail.pair("  Pri ", std::string_view{pri.data.data(), pri.length});
+        if (row.cli > 0) {
+            Line cli(20, true);
+            cli.decimal(static_cast<ULONG>(row.cli));
+            detail.pair("  CLI ", std::string_view{cli.data.data(), cli.length});
         }
-        signals.text("SIGNALS ");
-        signals.hex8(row.signal_alloc);
-        signals.character('/');
-        signals.hex8(row.signal_wait);
-        signals.character('/');
-        signals.hex8(row.signal_received);
-        signals.text("  STACK ");
-        signals.hex8(row.stack_lower);
-        signals.character('-');
-        signals.hex8(row.stack_upper);
+        if (row.command.front() != '\0') {
+            detail.pair("  Cmd ", row.command.data());
+        }
+        Line sig(30, true);
+        sig.hex8(row.signal_alloc);
+        sig.character('/');
+        sig.hex8(row.signal_wait);
+        sig.character('/');
+        sig.hex8(row.signal_received);
+        signals.pair("  Signals ", std::string_view{sig.data.data(), sig.length});
+        Line stack(20, true);
+        stack.hex8(row.stack_lower);
+        stack.character('-');
+        stack.hex8(row.stack_upper);
+        signals.pair("  Stack ", std::string_view{stack.data.data(), stack.length});
     } else {
-        detail.text("No matching tasks");
+        detail.text("  No matching tasks");
     }
     screen.line(view.rows - 2, detail);
     screen.line(view.rows - 1, signals);
+
     Line shortcuts(view.cols);
-    shortcuts.text(
-        view.cols < 80
-            ? "Enter info j/k / filter h help q quit"
-            : "Enter info j/k move n/u page t/p/s/c/a sort / filter b break h help q quit");
+    static constexpr std::array<KeyItem, 7> table_keys = {
+        {{"Enter", "info", 0}, {"j/k", "move", 2}, {"t/p/s/c/a", "sort", 3},
+         {"/", "filter", 1}, {"b", "break", 3}, {"h", "help", 0}, {"q", "quit", 0}}};
+    key_bar(shortcuts, table_keys);
     screen.line(view.rows, shortcuts);
-    Flush(Output());
+    frame.flush();
 }
 
 struct RawConsole {
@@ -989,8 +1247,9 @@ struct RawConsole {
             for (unsigned i = 0; i < sequence.size() && idle < 10 && size_pending; ++i) {
                 idle = poll(20000) ? 0 : idle + 1;
             }
-            PutStr("\2330m\2330 p\233H\233J");
-            Flush(Output());
+            // Clear, wrap and scroll back on, cursor back on.
+            frame.put("\2330m\f\233?7h\233>1h\233 p");
+            frame.flush();
             SetMode(input, 0);
         }
     }
@@ -1118,8 +1377,8 @@ struct RawConsole {
         }
         size_pending = true;
         size_polls = 0;
-        PutStr("\2330 q");
-        Flush(Output());
+        frame.put("\2330 q");
+        frame.flush();
     }
 
     void detect_size() {

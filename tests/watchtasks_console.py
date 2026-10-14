@@ -90,12 +90,16 @@ def main():
         word(f'size {columns} {lines}')
         pump(3.0)
         assert 'TASK DETAILS' in display(), display()
-        borders = [line for line in screen.display if '+-' in line and '-+' in line]
-        assert len(borders) == 2, display()
-        for line in borders:
-            start = line.index('+')
-            end = line.rindex('+')
-            assert start > 0 and end < columns - 1 and start == columns - 1 - end, (columns, line)
+        # The overlay's title and key bars are blue (SGR 43) cells: each spans
+        # the panel, centred with a margin on both sides.
+        bars = [y for y, line in enumerate(screen.display)
+                if 'TASK DETAILS' in line or 'Enter/Esc' in line]
+        assert len(bars) == 2, display()
+        for y in bars:
+            cells = [x for x in range(columns) if screen.buffer[y][x].bg == 'brown']
+            start, end = cells[0], cells[-1]
+            assert start > 0 and end < columns - 1 and start == columns - 1 - end, \
+                (columns, screen.display[y])
         print(f'PASS: overlay resize {columns}x{lines}', flush=True)
 
     try:
