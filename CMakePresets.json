@@ -1,0 +1,31 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "amiga-68000",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/amiga-68000",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-m68k-amigaos.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "SHELLTOOLS_CPU": "68000"
+      }
+    },
+    {
+      "name": "amiga-68020-60",
+      "inherits": "amiga-68000",
+      "binaryDir": "${sourceDir}/build/amiga-68020-60",
+      "cacheVariables": {
+        "SHELLTOOLS_CPU": "68020-60"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "amiga-68000", "configurePreset": "amiga-68000"},
+    {"name": "amiga-68020-60", "configurePreset": "amiga-68020-60"}
+  ],
+  "testPresets": [
+    {"name": "amiga-68000", "configurePreset": "amiga-68000", "output": {"outputOnFailure": true}},
+    {"name": "amiga-68020-60", "configurePreset": "amiga-68020-60", "output": {"outputOnFailure": true}}
+  ]
+}

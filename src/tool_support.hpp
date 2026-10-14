@@ -1,0 +1,62 @@
+#pragma once
+
+#include <dos/dos.h>
+#include <proto/dos.h>
+
+namespace shelltools {
+
+inline constexpr int ok = 0;
+inline constexpr int warn = 5;
+inline constexpr int error = 10;
+
+inline bool write_all(BPTR out, const char *data, LONG count) {
+    while (count > 0) {
+        const LONG wrote = Write(out, const_cast<char *>(data), count);
+        if (wrote <= 0)
+            return false;
+        data += wrote;
+        count -= wrote;
+    }
+    return true;
+}
+
+inline bool write_json_string(BPTR out, const char *input) {
+    static constexpr char hex[] = "0123456789abcdef";
+    char buffer[128];
+    unsigned n = 0;
+    buffer[n++] = '"';
+    for (unsigned i = 0; input[i] != '\0'; ++i) {
+        const UBYTE c = static_cast<UBYTE>(input[i]);
+        if (n + 6 >= sizeof buffer) {
+            if (!write_all(out, buffer, static_cast<LONG>(n)))
+                return false;
+            n = 0;
+        }
+        if (c == '"' || c == '\\') {
+            buffer[n++] = '\\';
+            buffer[n++] = static_cast<char>(c);
+        } else if (c < 0x20 || c >= 0x80) {
+            buffer[n++] = '\\';
+            buffer[n++] = 'u';
+            buffer[n++] = '0';
+            buffer[n++] = '0';
+            buffer[n++] = hex[c >> 4];
+            buffer[n++] = hex[c & 15];
+        } else {
+            buffer[n++] = static_cast<char>(c);
+        }
+    }
+    buffer[n++] = '"';
+    return write_all(out, buffer, static_cast<LONG>(n));
+}
+
+inline int dos_error(const char *command) {
+    PrintFault(IoErr(), const_cast<char *>(command));
+    return error;
+}
+
+inline void help(const char *text) {
+    PutStr(const_cast<char *>(text));
+}
+
+} // namespace shelltools
