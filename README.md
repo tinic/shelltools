@@ -18,6 +18,8 @@ Run Command HELP for exact syntax and return codes. No Unix aliases are installe
 
 `FindText` searches literal text by default. Add `REGEX` to use QuickJS regular expression syntax, for example `ShowTasks | FindText Ami.* REGEX`. `NOCASE`, `NUMBER`, `INVERT`, and `COUNT` work in both modes. Patterns are limited to 1024 bytes and input lines to 65536 bytes. Complex matches may exhaust memory sooner; invalid patterns, memory exhaustion, or the work limit return 10.
 
+All commands handle Ctrl-C as an AmigaDOS break (return code 5). Commands that read interactive input check for it while waiting for text.
+
 ShowTasks reports the task address as task_id and pr_TaskNum as cli_id. It also emits process_number when pr_TaskNum is nonzero; otherwise process_number is null. This is a Shell process number, not a universal process ID. Task addresses can be reused after a task exits. BreakTask TASK=<hex> NAME=<exact name> verifies both values against a current Exec list while task switching is forbidden, then sends Ctrl-C. The CLI route similarly checks the current command name. Ctrl-C is advisory; the target decides whether to exit.
 
 ShowTasks defaults to one aligned row per task with a P/T marker, task ID, CLI number, priority, state, stack size, and name. A different command appears on an indented line. `DETAIL` adds signal masks, stack addresses, process fields, and arguments; `MACHINE` emits one JSON object per task with all fields. Stack values are snapshots and a running task's saved stack pointer may be stale. Bounded name/command/argument copies avoid allocating or doing DOS I/O while Forbid() is active. A snapshot is capped at 96 tasks; truncation returns 5.

@@ -2,6 +2,7 @@
 
 #include <dos/dos.h>
 #include <proto/dos.h>
+#include <proto/exec.h>
 
 #include <array>
 #include <string_view>
@@ -11,6 +12,31 @@ namespace shelltools {
 inline constexpr int ok = 0;
 inline constexpr int warn = 5;
 inline constexpr int error = 10;
+
+inline void arm_break() {
+    SetSignal(0, SIGBREAKF_CTRL_C);
+}
+
+inline bool break_requested() {
+    return (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) != 0;
+}
+
+inline int break_result(const char *command) {
+    PrintFault(ERROR_BREAK, const_cast<char *>(command));
+    return warn;
+}
+
+inline bool wait_for_input(BPTR file) {
+    if (!IsInteractive(file)) {
+        return !break_requested();
+    }
+    while (!WaitForChar(file, 100000)) {
+        if (break_requested()) {
+            return false;
+        }
+    }
+    return !break_requested();
+}
 
 constexpr bool parse_task_id(std::string_view text, ULONG &address) {
     if (text.starts_with('$')) {

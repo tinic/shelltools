@@ -31,7 +31,7 @@ extern "C" bool lre_check_stack_overflow(void *opaque, size_t alloca_size) {
 
 extern "C" int lre_check_timeout(void *opaque) {
     auto &context = *static_cast<RegexContext *>(opaque);
-    context.interrupted = (SetSignal(0, 0) & SIGBREAKF_CTRL_C) != 0;
+    context.interrupted = shelltools::break_requested();
     return context.interrupted || ++context.polls > RegexContext::max_polls;
 }
 
@@ -106,16 +106,27 @@ constexpr int fold(int c) {
     return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
 }
 
-constexpr bool contains(std::span<const char> line, std::string_view pattern, bool nocase) {
+int contains(std::span<const char> line, std::string_view pattern, bool nocase) {
     if (pattern.empty()) {
-        return true;
+        return 1;
     }
     const auto matches = [nocase](char a, char b) {
         const auto left = static_cast<UBYTE>(a);
         const auto right = static_cast<UBYTE>(b);
         return (nocase ? fold(left) : left) == (nocase ? fold(right) : right);
     };
-    return std::ranges::search(line, pattern, matches).begin() != line.end();
+    if (pattern.size() > line.size()) {
+        return 0;
+    }
+    for (std::size_t at = 0; at <= line.size() - pattern.size(); ++at) {
+        if ((at & 255U) == 0 && shelltools::break_requested()) {
+            return -1;
+        }
+        if (std::ranges::equal(line.subspan(at, pattern.size()), pattern, matches)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 [[gnu::noinline, gnu::noipa]] int find_text() {
@@ -126,6 +137,9 @@ constexpr bool contains(std::span<const char> line, std::string_view pattern, bo
     }
     Regex regex;
     if (options.regex && !regex.compile(options.pattern, options.nocase)) {
+        if (regex.interrupted() || shelltools::break_requested()) {
+            return shelltools::break_result("FindText");
+        }
         Printf("FindText: regexp: %s\n", regex.error());
         return shelltools::error;
     }
@@ -151,13 +165,26 @@ constexpr bool contains(std::span<const char> line, std::string_view pattern, bo
     int rc = shelltools::ok;
     bool at_eof = false;
     while (!at_eof && rc == shelltools::ok) {
+        if (!shelltools::wait_for_input(file)) {
+            rc = shelltools::break_result("FindText");
+            break;
+        }
         const LONG count = Read(file, input.data(), input.size());
+        if (shelltools::break_requested()) {
+            rc = shelltools::break_result("FindText");
+            break;
+        }
         if (count < 0) {
-            rc = shelltools::dos_error("FindText");
+            rc = IoErr() == ERROR_BREAK ? shelltools::break_result("FindText")
+                                         : shelltools::dos_error("FindText");
             break;
         }
         at_eof = count == 0;
         for (LONG j = 0; j <= count; ++j) {
+            if ((j & 255) == 0 && shelltools::break_requested()) {
+                rc = shelltools::break_result("FindText");
+                break;
+            }
             if (j == count && !at_eof) {
                 break;
             }
@@ -193,10 +220,18 @@ constexpr bool contains(std::span<const char> line, std::string_view pattern, bo
                 options.regex ? regex.match(std::span{line, length})
                               : contains(std::span{line, length}, options.pattern, options.nocase);
             if (result < 0) {
-                PutStr(regex.interrupted()         ? "FindText: interrupted\n"
-                       : result == LRE_RET_TIMEOUT ? "FindText: regexp work limit reached\n"
-                                                   : "FindText: regexp out of memory or invalid\n");
-                rc = shelltools::error;
+                if (!options.regex || regex.interrupted()) {
+                    rc = shelltools::break_result("FindText");
+                } else {
+                    PutStr(result == LRE_RET_TIMEOUT
+                               ? "FindText: regexp work limit reached\n"
+                               : "FindText: regexp out of memory or invalid\n");
+                    rc = shelltools::error;
+                }
+                break;
+            }
+            if (shelltools::break_requested()) {
+                rc = shelltools::break_result("FindText");
                 break;
             }
             bool selected = result != 0;
@@ -211,7 +246,9 @@ constexpr bool contains(std::span<const char> line, std::string_view pattern, bo
                     }
                     if (!shelltools::write_all(Output(), line, static_cast<LONG>(length)) ||
                         !shelltools::write_all(Output(), "\n", 1)) {
-                        rc = shelltools::dos_error("FindText");
+                        rc = IoErr() == ERROR_BREAK || shelltools::break_requested()
+                                 ? shelltools::break_result("FindText")
+                                 : shelltools::dos_error("FindText");
                         break;
                     }
                 }
@@ -225,6 +262,9 @@ constexpr bool contains(std::span<const char> line, std::string_view pattern, bo
     FreeVec(line);
     if (own_file) {
         Close(file);
+    }
+    if (rc == shelltools::ok && shelltools::break_requested()) {
+        return shelltools::break_result("FindText");
     }
     return rc == shelltools::ok && matches == 0 ? shelltools::warn : rc;
 }
@@ -243,6 +283,7 @@ int regex_result = shelltools::error;
 } // namespace
 
 int main() {
+    shelltools::arm_break();
     LONG args[8] = {};
     RDArgs *rd =
         ReadArgs("TEXT,FILE,NOCASE/S,NUMBER/S,INVERT/S,COUNT/S,REGEX/S,HELP/S", args, nullptr);
@@ -254,7 +295,7 @@ int main() {
                          "USAGE: FindText TEXT [FILE] [REGEX] [NOCASE] [NUMBER] [INVERT] [COUNT]\n"
                          "DEFAULT: Literal search of input stream\n"
                          "REGEX: QuickJS syntax; pattern up to 1024 bytes\n"
-                         "RC: 0=matched 5=no match 10=error\n");
+                         "RC: 0=matched 5=no match/break 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }

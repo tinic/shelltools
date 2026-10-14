@@ -994,7 +994,17 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
         if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
             return shelltools::warn;
         }
-        Delay(ticks);
+        for (LONG remaining = ticks; remaining > 0;) {
+            if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
+                return shelltools::warn;
+            }
+            const LONG slice = std::min<LONG>(remaining, 10);
+            Delay(slice);
+            remaining -= slice;
+        }
+        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
+            return shelltools::warn;
+        }
         shelltools::capture_tasks(snapshot);
         cpu.update(sampler, snapshot);
         if (machine) {
@@ -1048,11 +1058,11 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
         return shelltools::error;
     }
     FreeArgs(rd);
-    if (!machine && IsInteractive(Input()) && IsInteractive(Output())) {
-        return watch_interactive(ticks, count, static_cast<unsigned>(rows),
-                                 static_cast<unsigned>(cols));
-    }
-    return watch_snapshots(ticks, count, machine);
+    const int result = !machine && IsInteractive(Input()) && IsInteractive(Output())
+                           ? watch_interactive(ticks, count, static_cast<unsigned>(rows),
+                                               static_cast<unsigned>(cols))
+                           : watch_snapshots(ticks, count, machine);
+    return shelltools::break_requested() ? shelltools::break_result("WatchTasks") : result;
 }
 
 constexpr ULONG private_stack_size = 16UL * 1024UL;
@@ -1069,6 +1079,7 @@ int private_stack_result = shelltools::error;
 } // namespace
 
 int main() {
+    shelltools::arm_break();
     APTR stack = AllocMem(private_stack_size, MEMF_ANY);
     if (!stack) {
         PutStr("WatchTasks: no memory for private stack\n");

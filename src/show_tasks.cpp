@@ -9,6 +9,7 @@
 #include <span>
 
 int main() {
+    shelltools::arm_break();
     LONG args[5] = {};
     RDArgs *rd = ReadArgs("MACHINE/S,DETAIL/S,TASK/K,CLI/N/K,HELP/S", args, nullptr);
     if (rd == nullptr) {
@@ -21,7 +22,7 @@ int main() {
                          "TASK/CLI: Select one task; CLI must be positive\n"
                          "DETAIL: Signals, stack addresses, process fields\n"
                          "MACHINE: JSON lines; no match gives no output\n"
-                         "RC: 0=ok 5=missing/truncated 10=error\n");
+                         "RC: 0=ok 5=missing/truncated/break 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }
@@ -46,7 +47,13 @@ int main() {
     FreeArgs(rd);
 
     static shelltools::TaskSnapshot snapshot;
+    if (shelltools::break_requested()) {
+        return shelltools::break_result("ShowTasks");
+    }
     shelltools::capture_tasks(snapshot);
+    if (shelltools::break_requested()) {
+        return shelltools::break_result("ShowTasks");
+    }
     const auto rows = std::span{snapshot.rows}.first(snapshot.count);
     if (by_task || by_cli) {
         const auto found =
@@ -79,8 +86,14 @@ int main() {
             shelltools::print_task_header();
         }
         for (const shelltools::TaskRow &row : rows) {
+            if (shelltools::break_requested()) {
+                return shelltools::break_result("ShowTasks");
+            }
             shelltools::print_task(row, machine, 0, -1, detail);
         }
+    }
+    if (shelltools::break_requested()) {
+        return shelltools::break_result("ShowTasks");
     }
     if (snapshot.truncated) {
         PutStr(machine ? "{\"truncated\":true}\n" : "TRUNCATED=1\n");

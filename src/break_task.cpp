@@ -46,6 +46,7 @@ bool signal_matching(const List &list, ULONG address, const char *name) {
 } // namespace
 
 int main() {
+    shelltools::arm_break();
     LONG args[5] = {};
     RDArgs *rd = ReadArgs("CLI/N,COMMAND,TASK,NAME,HELP/S", args, nullptr);
     if (rd == nullptr) {
@@ -55,7 +56,7 @@ int main() {
         shelltools::help("PURPOSE: Send Ctrl-C break to an Exec task\n"
                          "USAGE: BreakTask CLI=<number> COMMAND=<exact name>\n"
                          "   OR: BreakTask TASK=<hex task ID> NAME=<exact task name>\n"
-                         "RC: 0=signaled 5=changed/missing 10=error\n");
+                         "RC: 0=signaled 5=changed/missing/break 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }
@@ -74,6 +75,10 @@ int main() {
 
     // Resolve and signal within one critical section so the Process pointer
     // cannot be freed between lookup and Signal().
+    if (shelltools::break_requested()) {
+        FreeArgs(rd);
+        return shelltools::break_result("BreakTask");
+    }
     bool sent = false;
     Forbid();
     if (cli_route) {
@@ -96,6 +101,9 @@ int main() {
     }
     Permit();
     FreeArgs(rd);
+    if (shelltools::break_requested()) {
+        return shelltools::break_result("BreakTask");
+    }
     if (!sent) {
         PutStr("BreakTask: task missing or identity changed\n");
         return shelltools::warn;

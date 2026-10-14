@@ -1,6 +1,7 @@
 #include "tool_support.hpp"
 
 int main() {
+    shelltools::arm_break();
     LONG args[3] = {};
     RDArgs *rd = ReadArgs("FILE,LINES/N/K,HELP/S", args, nullptr);
     if (rd == nullptr) {
@@ -10,7 +11,7 @@ int main() {
         shelltools::help("PURPOSE: Print last lines of a seekable file\n"
                          "USAGE: LastLines FILE [LINES=<n>]\n"
                          "DEFAULT: 10 lines\n"
-                         "RC: 0=ok 10=error\n");
+                         "RC: 0=ok 5=break 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }
@@ -43,15 +44,25 @@ int main() {
     LONG lines = 0;
     bool found = false;
     while (rc == shelltools::ok && limit > 0 && remaining > 0 && !found) {
+        if (shelltools::break_requested()) {
+            rc = shelltools::break_result("LastLines");
+            break;
+        }
         const LONG count = remaining < static_cast<LONG>(sizeof buffer)
                                ? remaining
                                : static_cast<LONG>(sizeof buffer);
         const LONG offset = remaining - count;
         if (Seek(file, offset, OFFSET_BEGINNING) < 0 || Read(file, buffer, count) != count) {
-            rc = shelltools::dos_error("LastLines");
+            rc = IoErr() == ERROR_BREAK || shelltools::break_requested()
+                     ? shelltools::break_result("LastLines")
+                     : shelltools::dos_error("LastLines");
             break;
         }
         for (LONG i = count; i > 0; --i) {
+            if ((i & 255) == 0 && shelltools::break_requested()) {
+                rc = shelltools::break_result("LastLines");
+                break;
+            }
             const LONG absolute = offset + i - 1;
             if (buffer[i - 1] != '\n' || absolute == size - 1) {
                 continue;
@@ -62,6 +73,9 @@ int main() {
                 break;
             }
         }
+        if (rc != shelltools::ok) {
+            break;
+        }
         remaining = offset;
     }
     if (rc == shelltools::ok && limit > 0) {
@@ -69,18 +83,35 @@ int main() {
             rc = shelltools::dos_error("LastLines");
         } else {
             LONG count;
-            while ((count = Read(file, buffer, sizeof buffer)) > 0) {
+            while (rc == shelltools::ok) {
+                if (shelltools::break_requested()) {
+                    rc = shelltools::break_result("LastLines");
+                    break;
+                }
+                count = Read(file, buffer, sizeof buffer);
+                if (shelltools::break_requested()) {
+                    rc = shelltools::break_result("LastLines");
+                    break;
+                }
+                if (count <= 0) {
+                    break;
+                }
                 if (!shelltools::write_all(Output(), buffer, count)) {
-                    rc = shelltools::dos_error("LastLines");
+                    rc = IoErr() == ERROR_BREAK || shelltools::break_requested()
+                             ? shelltools::break_result("LastLines")
+                             : shelltools::dos_error("LastLines");
                     break;
                 }
             }
-            if (count < 0) {
-                rc = shelltools::dos_error("LastLines");
+            if (rc == shelltools::ok && count < 0) {
+                rc = IoErr() == ERROR_BREAK ? shelltools::break_result("LastLines")
+                                             : shelltools::dos_error("LastLines");
             }
         }
     }
     Close(file);
     FreeArgs(rd);
-    return rc;
+    return rc == shelltools::ok && shelltools::break_requested()
+               ? shelltools::break_result("LastLines")
+               : rc;
 }

@@ -31,6 +31,7 @@ constexpr Field fields[] = {{"system", 0},   {"cpu", 1},   {"fpu", 2},     {"mmu
 } // namespace
 
 int main() {
+    shelltools::arm_break();
     LONG args[2] = {};
     RDArgs *rd = ReadArgs("MACHINE/S,HELP/S", args, nullptr);
     if (rd == nullptr) {
@@ -41,12 +42,16 @@ int main() {
                          "USAGE: SystemInfo [MACHINE]\n"
                          "SOURCE: identify.library when installed; Exec fallback\n"
                          "OUTPUT: Key/value rows; MACHINE gives JSON\n"
-                         "RC: 0=ok 10=error\n");
+                         "RC: 0=ok 5=break 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }
     const bool machine = args[0] != 0;
     FreeArgs(rd);
+
+    if (shelltools::break_requested()) {
+        return shelltools::break_result("SystemInfo");
+    }
 
     Library *identify = OpenLibrary("identify.library", 8);
     if (machine) {
@@ -58,6 +63,10 @@ int main() {
                AvailMem(MEMF_FAST));
         if (identify) {
             for (const Field &field : fields) {
+                if (shelltools::break_requested()) {
+                    CloseLibrary(identify);
+                    return shelltools::break_result("SystemInfo");
+                }
                 PutStr(",\"");
                 PutStr(field.key);
                 PutStr("\":");
@@ -77,6 +86,10 @@ int main() {
                AvailMem(MEMF_FAST));
         if (identify) {
             for (const Field &field : fields) {
+                if (shelltools::break_requested()) {
+                    CloseLibrary(identify);
+                    return shelltools::break_result("SystemInfo");
+                }
                 const char *value = id_hardware(identify, field.id);
                 if (value) {
                     Printf("%s=%s\n", field.key, value);
@@ -87,5 +100,5 @@ int main() {
     if (identify) {
         CloseLibrary(identify);
     }
-    return shelltools::ok;
+    return shelltools::break_requested() ? shelltools::break_result("SystemInfo") : shelltools::ok;
 }
