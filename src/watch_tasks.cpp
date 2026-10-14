@@ -469,6 +469,7 @@ void render(View &view, Screen &screen, LONG number) {
     Line headings(view.cols);
     const bool compact = view.cols < 60;
     headings.spaces(2);
+    headings.text("T/P ");
     if (!compact) {
         headings.field("TASK_ID", 8);
         headings.character(' ');
@@ -491,6 +492,7 @@ void render(View &view, Screen &screen, LONG number) {
     const unsigned page = view.rows - 10;
     if (view.help) {
         static constexpr std::array help = {
+            "T/P  Exec task (thread) / DOS process",
             "j/k or arrows  select; n/u page down/up",
             "t/p/s/c/a  sort CPU/priority/state/CLI/name",
             "/  filter name or command; Enter accepts",
@@ -519,6 +521,9 @@ void render(View &view, Screen &screen, LONG number) {
             const TaskRow &row = view.snapshot.rows[task_index];
             line.character(pos == view.selected ? '>' : ' ');
             line.character(' ');
+            line.character(' ');
+            line.character(row.type == NT_PROCESS ? 'P' : 'T');
+            line.spaces(2);
             if (!compact) {
                 line.hex8(row.address);
                 line.character(' ');
@@ -898,6 +903,7 @@ int main() {
             "PURPOSE: Live task CPU and memory monitor\n"
             "USAGE: WatchTasks [TICKS=<n>] [COUNT=<n>] [ROWS=<n>] [COLS=<n>] [MACHINE]\n"
             "DEFAULT: 50 ticks, unlimited, auto console size\n"
+            "T/P: T=Exec task (thread), P=DOS process\n"
             "KEYS: j/k move; t/p/s/c/a sort; / filter; b break; h help; q quit\n"
             "CPU: VBlank sample estimate; -- means few samples\n"
             "OUTPUT: Interactive ISO-8859-1 UI; MACHINE gives JSON lines\n"
