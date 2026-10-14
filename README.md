@@ -6,7 +6,7 @@ Small AmigaOS 68k Shell commands for observing and controlling a machine. Comman
 
 | Command | Purpose | Key options |
 | --- | --- | --- |
-| ShowTasks | Exec task and DOS process details | DETAIL, MACHINE |
+| ShowTasks | Exec task and DOS process details | TASK, CLI, DETAIL, MACHINE |
 | WatchTasks | Live task CPU and memory monitor | TICKS, COUNT, ROWS, COLS, MACHINE |
 | BreakTask | Send Ctrl-C to a verified task | CLI + COMMAND, or TASK + NAME |
 | SystemInfo | OS and hardware information | MACHINE |
@@ -19,6 +19,8 @@ Run Command HELP for exact syntax and return codes. No Unix aliases are installe
 ShowTasks reports the task address as task_id and pr_TaskNum as cli_id. It also emits process_number when pr_TaskNum is nonzero; otherwise process_number is null. This is a Shell process number, not a universal process ID. Task addresses can be reused after a task exits. BreakTask TASK=<hex> NAME=<exact name> verifies both values against a current Exec list while task switching is forbidden, then sends Ctrl-C. The CLI route similarly checks the current command name. Ctrl-C is advisory; the target decides whether to exit.
 
 ShowTasks defaults to one aligned row per task with a P/T marker, task ID, CLI number, priority, state, stack size, and name. A different command appears on an indented line. `DETAIL` adds signal masks, stack addresses, process fields, and arguments; `MACHINE` emits one JSON object per task with all fields. Stack values are snapshots and a running task's saved stack pointer may be stale. Bounded name/command/argument copies avoid allocating or doing DOS I/O while Forbid() is active. A snapshot is capped at 96 tasks; truncation returns 5.
+
+Use `ShowTasks TASK=<hex> DETAIL` or `ShowTasks CLI=<positive number> DETAIL` to inspect one captured task. `TASK` accepts the displayed hex ID with optional `$` or `0x` prefix. The selectors cannot be combined. A missing task returns 5; `MACHINE` emits no task record in that case. Invalid selectors return 10.
 
 WatchTasks uses ISO-8859-1 guillemets and middle dots for memory bars, and Amiga console CSI sequences for repainting. It keeps the Console Preferences default colors for ordinary rows and uses palette colors for headers, memory, filtering, and selection. It reads the console's window bounds on startup and checks for resizing while running; ROWS and COLS override detection when needed. It updates only changed lines, including when selection moves. The title and selected task fill their full rows. The T/P column marks an Exec task (thread) with T and an AmigaDOS process with P. Task rows also show task ID, CLI number, priority, sampled CPU percentage, state, and the longest name the window permits; narrow windows retain T/P, CPU percentage, and name. The selected task's command appears in the detail line. In an interactive console: j/k or arrows select, n/u page, t/p/s/c/a sort by CPU/priority/state/CLI/name, / filters, Space pauses, b sends Ctrl-C to the selected task, h opens grouped scrollable help, and q quits. CPU usage is estimated from the task running at each vertical blank interrupt (50 or 60 samples per second); idle frames count toward the denominator. The server is removed when WatchTasks exits. Values below ten samples appear as unavailable. With redirected I/O it prints repeated detail snapshots; MACHINE emits JSON lines with `cpu_tenths` (percent times ten, or null when unavailable). Scout patches Exec task switching for more precise timing; this tool uses sampling to keep the monitor small and removable.
 

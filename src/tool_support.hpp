@@ -12,6 +12,35 @@ inline constexpr int ok = 0;
 inline constexpr int warn = 5;
 inline constexpr int error = 10;
 
+constexpr bool parse_task_id(std::string_view text, ULONG &address) {
+    if (text.starts_with('$')) {
+        text.remove_prefix(1);
+    } else if (text.starts_with("0x") || text.starts_with("0X")) {
+        text.remove_prefix(2);
+    }
+    if (text.empty()) {
+        return false;
+    }
+    address = 0;
+    for (const char c : text) {
+        unsigned digit;
+        if (c >= '0' && c <= '9') {
+            digit = static_cast<unsigned>(c - '0');
+        } else if (c >= 'a' && c <= 'f') {
+            digit = static_cast<unsigned>(c - 'a' + 10);
+        } else if (c >= 'A' && c <= 'F') {
+            digit = static_cast<unsigned>(c - 'A' + 10);
+        } else {
+            return false;
+        }
+        if (address > 0x0fffffffUL) {
+            return false;
+        }
+        address = (address << 4) | digit;
+    }
+    return address != 0;
+}
+
 inline bool write_all(BPTR out, const char *data, LONG count) {
     while (count > 0) {
         // FWrite shares DOS's buffered output path with Printf and PutStr.

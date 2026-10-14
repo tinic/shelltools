@@ -32,35 +32,6 @@ constexpr bool same_name(const Task *task, std::string_view expected) {
     return actual != nullptr && std::string_view{actual} == expected;
 }
 
-constexpr bool parse_task_id(std::string_view text, ULONG &address) {
-    if (text.starts_with('$')) {
-        text.remove_prefix(1);
-    } else if (text.starts_with("0x") || text.starts_with("0X")) {
-        text.remove_prefix(2);
-    }
-    if (text.empty()) {
-        return false;
-    }
-    address = 0;
-    for (const char c : text) {
-        unsigned digit;
-        if (c >= '0' && c <= '9') {
-            digit = static_cast<unsigned>(c - '0');
-        } else if (c >= 'a' && c <= 'f') {
-            digit = static_cast<unsigned>(c - 'a' + 10);
-        } else if (c >= 'A' && c <= 'F') {
-            digit = static_cast<unsigned>(c - 'A' + 10);
-        } else {
-            return false;
-        }
-        if (address > 0x0fffffffUL) {
-            return false;
-        }
-        address = (address << 4) | digit;
-    }
-    return address != 0;
-}
-
 bool signal_matching(const List &list, ULONG address, const char *name) {
     for (const Node *node = list.lh_Head; node->ln_Succ; node = node->ln_Succ) {
         Task *task = reinterpret_cast<Task *>(const_cast<Node *>(node));
@@ -93,8 +64,9 @@ int main() {
     ULONG address = 0;
     if (cli_route == task_route ||
         (cli_route && (args[0] == 0 || args[1] == 0 || *reinterpret_cast<LONG *>(args[0]) <= 0)) ||
-        (task_route && (args[2] == 0 || args[3] == 0 ||
-                        !parse_task_id(reinterpret_cast<const char *>(args[2]), address)))) {
+        (task_route &&
+         (args[2] == 0 || args[3] == 0 ||
+          !shelltools::parse_task_id(reinterpret_cast<const char *>(args[2]), address)))) {
         PutStr("BreakTask: use CLI+COMMAND or TASK+NAME; see HELP\n");
         FreeArgs(rd);
         return shelltools::error;

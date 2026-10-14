@@ -85,6 +85,18 @@ def main():
                         "signal_wait", "stack_lower", "stack_upper")):
                 raise AssertionError(f"ShowTasks detail missing: {task!r}")
 
+        result = run("ShowTasks", "TASK=FFFFFFFF", "MACHINE")
+        check((result.returncode, result.stdout), (5, ""), "ShowTasks missing task JSON")
+        result = run("ShowTasks", "CLI=9999")
+        check((result.returncode, result.stdout),
+              (5, "ShowTasks: no matching task\n"), "ShowTasks missing CLI")
+        for selector in (("TASK=badhex",), ("CLI=0",),
+                         ("TASK=FFFFFFFF", "CLI=1")):
+            result = run("ShowTasks", *selector)
+            check(result.returncode, 10, f"ShowTasks invalid {selector}")
+        result = run("ShowTasks", "TASK=badhex", "MACHINE")
+        check((result.returncode, result.stdout), (10, ""), "ShowTasks invalid JSON")
+
         result = run("WatchTasks", "MACHINE", "COUNT=1")
         check(result.returncode, 0, "WatchTasks rc")
         snapshots = [json.loads(line) for line in result.stdout.splitlines()]
