@@ -160,6 +160,8 @@ struct View {
     TaskSnapshot snapshot;
     CpuUsage cpu;
     TaskDetails details;
+    TaskRow selected_task = {};
+    TaskRow break_target = {};
     // cppcheck-suppress uninitMemberVarNoCtor
     std::array<unsigned, TaskSnapshot::capacity> order;
     unsigned shown = 0;
@@ -174,6 +176,9 @@ struct View {
     bool paused = false;
     bool help = false;
     bool editing = false;
+    bool selection_valid = false;
+    bool confirming_break = false;
+    bool break_target_missing = false;
     bool truncated = false;
     ULONG chip_free = 0;
     ULONG chip_total = 0;
@@ -243,7 +248,7 @@ constexpr std::array<std::array<HelpItem, 2>, 16> wide_help = {{
     {section("FILTER"), HelpItem{}},
     {HelpItem{"/", "Filter name/command"}, section("ACTIONS")},
     {HelpItem{"Backspace", "Delete"}, HelpItem{"Space", "Pause / resume"}},
-    {HelpItem{"Enter/Esc", "Finish filter"}, HelpItem{"b", "Send Ctrl-C"}},
+    {HelpItem{"Enter/Esc", "Finish filter"}, HelpItem{"b", "Confirm Ctrl-C"}},
     {HelpItem{}, HelpItem{"h", "Close help"}},
     {section("TABLE"), HelpItem{"q", "Quit"}},
     {HelpItem{"T", "Exec task"}, HelpItem{}},
@@ -267,7 +272,7 @@ constexpr std::array narrow_help = {
     HelpItem{"Enter/Esc", "Finish filter"},
     section("ACTIONS"),
     HelpItem{"Space", "Pause / resume"},
-    HelpItem{"b", "Send Ctrl-C"},
+    HelpItem{"b", "Confirm Ctrl-C"},
     HelpItem{"h  q", "Close help  Quit"},
     section("TABLE / CPU"),
     HelpItem{"T  P", "Exec task  DOS process"},
@@ -596,7 +601,23 @@ constexpr bool before(const TaskRow &a, const TaskRow &b, unsigned a_cpu, unsign
     return names ? names < 0 : a.address < b.address;
 }
 
+constexpr bool same_task(const TaskRow &a, const TaskRow &b) {
+    return a.address == b.address && a.type == b.type &&
+           std::string_view{a.name.data()} == std::string_view{b.name.data()};
+}
+
+constexpr bool same_break_target(const TaskRow &a, const TaskRow &b) {
+    return same_task(a, b) && a.cli == b.cli &&
+           std::string_view{a.command.data()} == std::string_view{b.command.data()};
+}
+
 void prepare(View &view) {
+    if (view.confirming_break && !view.break_target_missing) {
+        const auto captured = std::span{view.snapshot.rows}.first(view.snapshot.count);
+        view.break_target_missing = !std::ranges::any_of(captured, [&view](const TaskRow &row) {
+            return same_break_target(row, view.break_target);
+        });
+    }
     view.shown = 0;
     for (unsigned i = 0; i < view.snapshot.count; ++i) {
         const TaskRow &row = view.snapshot.rows[i];
@@ -612,8 +633,20 @@ void prepare(View &view) {
         }
         view.order[at] = i;
     }
+    if (view.selection_valid) {
+        for (unsigned i = 0; i < view.shown; ++i) {
+            if (same_task(view.snapshot.rows[view.order[i]], view.selected_task)) {
+                view.selected = i;
+                break;
+            }
+        }
+    }
     if (view.selected >= view.shown) {
         view.selected = view.shown ? view.shown - 1 : 0;
+    }
+    view.selection_valid = view.shown != 0;
+    if (view.selection_valid) {
+        view.selected_task = view.snapshot.rows[view.order[view.selected]];
     }
     const unsigned page = task_page_rows(view.rows);
     if (view.selected < view.scroll) {
@@ -651,11 +684,6 @@ constexpr void cpu_field(Line &line, unsigned tenths, unsigned samples) {
     line.decimal(tenths / 10, 4);
     line.character('.');
     line.decimal(tenths % 10);
-}
-
-constexpr bool same_task(const TaskRow &a, const TaskRow &b) {
-    return a.address == b.address && a.type == b.type &&
-           std::string_view{a.name.data()} == std::string_view{b.name.data()};
 }
 
 void refresh_details(View &view) {
@@ -878,6 +906,44 @@ bool break_selected(const TaskRow &row) {
     return sent;
 }
 
+void render_break_confirmation(View &view, Panel &panel) {
+    panel.size(view.rows, view.cols);
+    panel.height = 10;
+    panel.top = (view.rows - panel.height) / 2 + 1;
+    Line title(panel.width, true);
+    title.use(Attr::bar_key).text(" ARE YOU SURE? ");
+    title.use(Attr::bar).fill();
+    panel.set(0, title);
+    Line question(panel.inner(), true);
+    question.text(view.break_target_missing ? "Task changed or missing"
+                                            : "Send Ctrl-C to this task?");
+    panel.content(2, question);
+    Line name(panel.inner(), true);
+    name.use(Attr::bold).text(view.break_target.name.data());
+    panel.content(3, name);
+    Line command(panel.inner(), true);
+    if (view.break_target.command.front() != '\0') {
+        command.text("Cmd ");
+        command.text(view.break_target.command.data());
+    }
+    panel.content(4, command);
+    Line identity(panel.inner(), true);
+    identity.text(view.break_target.type == NT_PROCESS ? "Process ID " : "Exec task ID ");
+    identity.hex8(view.break_target.address);
+    panel.content(5, identity);
+    Line warning(panel.inner(), true);
+    warning.text("This can stop the selected task.");
+    panel.content(7, warning);
+    Line keys(panel.width, true);
+    keys.use(Attr::bar).character(' ');
+    if (!view.break_target_missing) {
+        keys.key("Y", "send");
+    }
+    keys.key("Enter/Esc/N", "cancel");
+    keys.use(Attr::bar).fill();
+    panel.set(panel.height - 1, keys);
+}
+
 // The bar across the top: name and what it counts on the left, `right` at the
 // right edge when both fit.
 void title_bar(Line &line, std::string_view what, const Line &right) {
@@ -993,7 +1059,11 @@ void render(View &view, Screen &screen, LONG number) {
         return;
     }
     prepare(view);
-    if (view.details.active) {
+    if (view.confirming_break) {
+        static Panel confirmation;
+        render_break_confirmation(view, confirmation);
+        screen.panel = &confirmation;
+    } else if (view.details.active) {
         static Panel panel;
         render_details(view, panel);
         screen.panel = &panel;
@@ -1393,6 +1463,18 @@ struct RawConsole {
 int watch_snapshots(LONG ticks, LONG count, bool machine);
 
 void handle_key(View &view, char key, bool &done) {
+    if (view.confirming_break) {
+        if (key == 'y' || key == 'Y') {
+            const bool sent = !view.break_target_missing && break_selected(view.break_target);
+            view.message = sent ? "Ctrl-C sent" : "Task changed or missing";
+            view.confirming_break = false;
+        } else if (key == 'n' || key == 'N' || key == '\r' || key == '\n' || key == 27 ||
+                   key == 'q' || key == 'Q') {
+            view.confirming_break = false;
+            view.message = "Break cancelled";
+        }
+        return;
+    }
     if (view.editing) {
         const auto len = std::string_view{view.filter.data()}.size();
         if (key == '\r' || key == '\n' || key == 27) {
@@ -1405,6 +1487,7 @@ void handle_key(View &view, char key, bool &done) {
             view.filter[len + 1] = '\0';
         }
         view.selected = 0;
+        view.selection_valid = false;
         view.scroll = 0;
         return;
     }
@@ -1454,6 +1537,10 @@ void handle_key(View &view, char key, bool &done) {
         }
         return;
     }
+    if (key == 'j' || key == 'k' || key == 'n' || key == 'u' || key == '/' ||
+        key == 't' || key == 'p' || key == 's' || key == 'c' || key == 'a') {
+        view.selection_valid = false;
+    }
     if (key == 'q' || key == 'Q') {
         done = true;
     } else if ((key == '\r' || key == '\n') && view.shown) {
@@ -1488,10 +1575,14 @@ void handle_key(View &view, char key, bool &done) {
         view.sort = key;
         view.selected = 0;
         view.scroll = 0;
-    } else if (key == 'b') {
-        const bool sent =
-            view.shown && break_selected(view.snapshot.rows[view.order[view.selected]]);
-        view.message = sent ? "Ctrl-C sent" : "Task changed or missing";
+    } else if (key == 'b' || key == 'B') {
+        if (view.shown) {
+            view.break_target = view.snapshot.rows[view.order[view.selected]];
+            view.break_target_missing = false;
+            view.confirming_break = true;
+        } else {
+            view.message = "No task selected";
+        }
     }
 }
 
