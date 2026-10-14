@@ -75,7 +75,7 @@ void capture_one(TaskSnapshot &snapshot, const Task *task) {
         row.process_stack_size = process->pr_StackSize;
         row.process_flags = process->pr_Flags;
         copy_command(row.command, process);
-        copy_name(row.arguments, process->pr_Arguments);
+        copy_name(row.arguments, reinterpret_cast<const char *>(process->pr_Arguments));
     }
 }
 

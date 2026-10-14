@@ -7,6 +7,20 @@
 #include <array>
 #include <string_view>
 
+// The $VER: tag AmigaOS Version reads.  CMake defines all three; a
+// distribution sets SHELLTOOLS_VERSION_SUFFIX to append its own marker.
+#ifndef SHELLTOOLS_VERSION
+#define SHELLTOOLS_VERSION "1.0"
+#endif
+#ifndef SHELLTOOLS_VERSION_DATE
+#define SHELLTOOLS_VERSION_DATE ""
+#endif
+#ifndef SHELLTOOLS_VERSION_SUFFIX
+#define SHELLTOOLS_VERSION_SUFFIX ""
+#endif
+#define SHELLTOOLS_VERSTAG(name) \
+    "$VER: " name " " SHELLTOOLS_VERSION SHELLTOOLS_VERSION_DATE SHELLTOOLS_VERSION_SUFFIX
+
 namespace shelltools {
 
 inline constexpr int ok = 0;
@@ -105,7 +119,11 @@ inline int dos_error(const char *command) {
     return error;
 }
 
-inline void help(const char *text) {
+// HELP starts with the version line.  The reference also keeps the $VER:
+// tag through --gc-sections.
+inline void help(const char *version_tag, const char *text) {
+    PutStr(const_cast<char *>(version_tag + 6));
+    PutStr(const_cast<char *>("\n"));
     PutStr(const_cast<char *>(text));
 }
 

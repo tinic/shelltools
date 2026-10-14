@@ -13,6 +13,8 @@ Run Command HELP for exact syntax and return codes. No Unix aliases are installe
 
 Both commands handle Ctrl-C as an AmigaDOS break (return code 5).
 
+Each command carries an AmigaOS version string (`Version ShowTasks`), and HELP prints it on its first line.
+
 ShowTasks reports the task address as task_id and pr_TaskNum as cli_id. It also emits process_number when pr_TaskNum is nonzero; otherwise process_number is null. This is a Shell process number, not a universal process ID. Task addresses can be reused after a task exits. WatchTasks verifies the selected task's address and name against the current Exec lists before sending Ctrl-C with `b`. Ctrl-C is advisory; the target decides whether to exit.
 
 ShowTasks defaults to one aligned row per task with a P/T marker, task ID, CLI number, priority, state, stack size, and name. A different command appears on an indented line. `DETAIL` adds signal masks, stack addresses, process fields, and arguments; `MACHINE` emits one JSON object per task with all fields. Stack values are snapshots and a running task's saved stack pointer may be stale. Bounded name/command/argument copies avoid allocating or doing DOS I/O while Forbid() is active. A snapshot is capped at 96 tasks; truncation returns 5.
@@ -41,6 +43,8 @@ cmake --install build/amiga-68000 --prefix /path/to/staging
 ~~~
 
 The optional 68020–68060 build is amiga-68020-60. Binaries install to C/ in the prefix. All tools use C++23, -Os -flto, section garbage collection, and disable RTTI and exceptions. The 68000 build uses the nix20 startup/runtime.
+
+A distribution can append its own marker to the version string with `-DSHELLTOOLS_VERSION_SUFFIX=" name version"` (empty by default).
 
 Both release builds use strict GCC warnings as errors, including the [C++ Best Practices warning set](https://github.com/cpp-best-practices/cppbestpractices/blob/master/02-Use_the_Tools_Available.md#compilers) (`-Wall`, `-Wextra`, `-Wpedantic`, `-Wshadow`, conversion and cast checks, and related diagnostics). Run GCC's static analyzer and cppcheck with the analysis preset; cppcheck is required for this preset:
 
