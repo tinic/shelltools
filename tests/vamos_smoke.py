@@ -32,7 +32,7 @@ def main():
                 capture_output=True, text=True, timeout=15, check=False)
 
         names = ("ShowTasks", "WatchTasks", "BreakTask", "FirstLines",
-                 "LastLines", "FindText", "DiskFree", "SystemInfo", "RebootSync")
+                 "LastLines", "FindText", "SystemInfo", "RebootSync")
         for name in names:
             result = run(name, "HELP")
             check(result.returncode, 0, f"{name} HELP rc")
@@ -53,12 +53,6 @@ def main():
         check((result.returncode, result.stdout), (0, "2:beta\n4:delta\n"), "FindText")
         result = run("FindText", "TEXT=missing", "FILE=test:lines.txt", "COUNT")
         check((result.returncode, result.stdout), (5, "0\n"), "FindText no match")
-
-        result = run("DiskFree", "PATH=test:", "MACHINE")
-        check(result.returncode, 0, "DiskFree rc")
-        disk = json.loads(result.stdout)
-        if disk["path"] != "test:" or disk["free"] > disk["blocks"]:
-            raise AssertionError(f"DiskFree output: {disk!r}")
 
         result = run("SystemInfo", "MACHINE")
         check(result.returncode, 0, "SystemInfo rc")
@@ -90,7 +84,7 @@ def main():
         result = run("BreakTask", "TASK=FFFFFFFF", "NAME=absent")
         check(result.returncode, 5, "BreakTask missing task rc")
 
-    print("amiga-smoke: 9 commands passed")
+    print("amiga-smoke: 8 commands passed")
 
 
 if __name__ == "__main__":

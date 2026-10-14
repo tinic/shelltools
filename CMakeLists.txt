@@ -59,7 +59,6 @@ shelltool(BreakTask src/break_task.cpp)
 shelltool(FirstLines src/first_lines.cpp)
 shelltool(LastLines src/last_lines.cpp)
 shelltool(FindText src/find_text.cpp)
-shelltool(DiskFree src/disk_free.cpp)
 shelltool(SystemInfo src/system_info.cpp)
 shelltool(RebootSync src/reboot_sync.cpp)
 
