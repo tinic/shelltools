@@ -7,75 +7,185 @@
 #include <exec/nodes.h>
 #include <proto/exec.h>
 
+#include <algorithm>
+#include <array>
+#include <span>
+#include <string_view>
+
 namespace {
 
 using shelltools::TaskRow;
 using shelltools::TaskSnapshot;
 
-char lower(char c) {
+constexpr char lower(char c) {
     return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
 }
 
-int compare_text(const char *a, const char *b) {
-    while (*a && *b) {
-        const char x = lower(*a++);
-        const char y = lower(*b++);
-        if (x != y)
-            return static_cast<unsigned char>(x) - static_cast<unsigned char>(y);
+constexpr int compare_text(std::string_view a, std::string_view b) {
+    const auto equal = [](char x, char y) { return lower(x) == lower(y); };
+    const auto [left, right] = std::ranges::mismatch(a, b, equal);
+    if (left == a.end()) {
+        return right == b.end() ? 0 : -1;
     }
-    return static_cast<unsigned char>(*a) - static_cast<unsigned char>(*b);
+    if (right == b.end()) {
+        return 1;
+    }
+    return static_cast<unsigned char>(lower(*left)) - static_cast<unsigned char>(lower(*right));
 }
 
-bool contains(const char *text, const char *part) {
-    if (!*part)
+constexpr bool contains(std::string_view text, std::string_view part) {
+    if (part.empty()) {
         return true;
-    for (; *text; ++text) {
-        const char *a = text;
-        const char *b = part;
-        while (*a && *b && lower(*a) == lower(*b)) {
-            ++a;
-            ++b;
-        }
-        if (!*b)
-            return true;
     }
-    return false;
-}
-
-void safe_clip(char *out, unsigned capacity, const char *text) {
-    unsigned i = 0;
-    while (text[i] && i + 1 < capacity) {
-        const UBYTE c = static_cast<UBYTE>(text[i]);
-        out[i] = (c < 0x20 || (c >= 0x7f && c < 0xa0)) ? '?' : static_cast<char>(c);
-        ++i;
-    }
-    out[i] = '\0';
+    const auto equal = [](char x, char y) { return lower(x) == lower(y); };
+    return std::ranges::search(text, part, equal).begin() != text.end();
 }
 
 struct View {
     TaskSnapshot snapshot;
-    unsigned order[TaskSnapshot::capacity];
+    std::array<unsigned, TaskSnapshot::capacity> order;
     unsigned shown = 0;
     unsigned selected = 0;
     unsigned scroll = 0;
     unsigned rows = 24;
-    char filter[32] = {};
+    unsigned cols = 80;
+    std::array<char, 32> filter = {};
     const char *message = "";
     char sort = 'p';
     bool paused = false;
     bool help = false;
     bool editing = false;
     bool truncated = false;
+    ULONG chip_free = 0;
+    ULONG chip_total = 0;
+    ULONG fast_free = 0;
+    ULONG fast_total = 0;
 };
 
-bool before(const TaskRow &a, const TaskRow &b, char sort) {
-    if (sort == 'p' && a.priority != b.priority)
+constexpr unsigned max_rows = 100;
+constexpr unsigned max_cols = 160;
+
+struct Line {
+    std::array<char, max_cols> data = {};
+    unsigned length = 0;
+    unsigned limit;
+
+    constexpr explicit Line(unsigned cols)
+        : limit(cols > 1 ? std::min(cols - 1, max_cols - 1) : 0) {}
+
+    constexpr void character(char c) {
+        if (length < limit) {
+            data[length++] = c;
+        }
+    }
+    constexpr void text(std::string_view s) {
+        for (const unsigned char c : s) {
+            character(c < 0x20 || (c >= 0x7f && c < 0xa0) ? '?' : static_cast<char>(c));
+        }
+    }
+    constexpr void spaces(unsigned count) {
+        while (count--) {
+            character(' ');
+        }
+    }
+    constexpr void field(std::string_view s, unsigned width) {
+        unsigned n = 0;
+        for (const unsigned char c : s) {
+            if (n == width) {
+                break;
+            }
+            character(c < 0x20 || (c >= 0x7f && c < 0xa0) ? '?' : static_cast<char>(c));
+            ++n;
+        }
+        spaces(width - n);
+    }
+    constexpr std::span<const char> view() const { return {data.data(), length}; }
+    constexpr void decimal(ULONG value) {
+        std::array<char, 10> digits;
+        unsigned n = 0;
+        do {
+            digits[n++] = static_cast<char>('0' + value % 10);
+            value /= 10;
+        } while (value);
+        while (n) {
+            character(digits[--n]);
+        }
+    }
+    constexpr void signed_decimal(LONG value) {
+        if (value < 0) {
+            character('-');
+            decimal(static_cast<ULONG>(-value));
+        } else {
+            decimal(static_cast<ULONG>(value));
+        }
+    }
+    constexpr void hex8(ULONG value) {
+        static constexpr char digits[] = "0123456789ABCDEF";
+        for (int shift = 28; shift >= 0; shift -= 4) {
+            character(digits[(value >> shift) & 15]);
+        }
+    }
+};
+
+struct Screen {
+    std::array<std::array<char, max_cols>, max_rows> previous = {};
+    std::array<bool, max_rows> selected = {};
+    std::array<bool, max_rows> valid = {};
+    unsigned rows = 0;
+    unsigned cols = 0;
+
+    void size(unsigned height, unsigned width) {
+        if (height == rows && width == cols) {
+            return;
+        }
+        rows = height;
+        cols = width;
+        valid.fill(false);
+        PutStr("\2330m\233 p\233H\233J");
+    }
+
+    void line(unsigned row, const Line &content, bool highlight = false) {
+        if (row == 0 || row > rows) {
+            return;
+        }
+        const unsigned index = row - 1;
+        const bool same =
+            valid[index] && selected[index] == highlight &&
+            std::ranges::equal(content.view(), std::span{previous[index].data(), content.length}) &&
+            previous[index][content.length] == '\0';
+        if (same) {
+            return;
+        }
+        Printf("\233%lu;1H", static_cast<ULONG>(row));
+        if (highlight) {
+            PutStr("\2337m");
+        }
+        const auto text = content.view();
+        if (!text.empty()) {
+            shelltools::write_all(Output(), text.data(), static_cast<LONG>(text.size()));
+        }
+        PutStr("\233K");
+        if (highlight) {
+            PutStr("\2330m");
+        }
+        std::ranges::copy(content.view(), previous[index].begin());
+        previous[index][content.length] = '\0';
+        selected[index] = highlight;
+        valid[index] = true;
+    }
+};
+
+constexpr bool before(const TaskRow &a, const TaskRow &b, char sort) {
+    if (sort == 'p' && a.priority != b.priority) {
         return a.priority > b.priority;
-    if (sort == 's' && a.state != b.state)
+    }
+    if (sort == 's' && a.state != b.state) {
         return a.state < b.state;
-    if (sort == 'c' && a.cli != b.cli)
+    }
+    if (sort == 'c' && a.cli != b.cli) {
         return a.cli < b.cli;
-    const int names = compare_text(a.name, b.name);
+    }
+    const int names = compare_text(a.name.data(), b.name.data());
     return names ? names < 0 : a.address < b.address;
 }
 
@@ -83,8 +193,10 @@ void prepare(View &view) {
     view.shown = 0;
     for (unsigned i = 0; i < view.snapshot.count; ++i) {
         const TaskRow &row = view.snapshot.rows[i];
-        if (!contains(row.name, view.filter) && !contains(row.command, view.filter))
+        const std::string_view filter{view.filter.data()};
+        if (!contains(row.name.data(), filter) && !contains(row.command.data(), filter)) {
             continue;
+        }
         unsigned at = view.shown++;
         while (at && before(row, view.snapshot.rows[view.order[at - 1]], view.sort)) {
             view.order[at] = view.order[at - 1];
@@ -92,45 +204,49 @@ void prepare(View &view) {
         }
         view.order[at] = i;
     }
-    if (view.selected >= view.shown)
+    if (view.selected >= view.shown) {
         view.selected = view.shown ? view.shown - 1 : 0;
-    const unsigned page = view.rows - 11;
-    if (view.selected < view.scroll)
-        view.scroll = view.selected;
-    if (view.selected >= view.scroll + page)
-        view.scroll = view.selected - page + 1;
-}
-
-void memory_bar(const char *label, ULONG free, ULONG total) {
-    char bar[23];
-    bar[0] = '\253'; // ISO-8859-1 left guillemet
-    const ULONG used = total > free ? total - free : 0;
-    const ULONG step = total / 20 + (total % 20 != 0);
-    unsigned filled = step ? used / step : 0;
-    if (filled > 20)
-        filled = 20;
-    for (unsigned i = 0; i < 20; ++i)
-        bar[i + 1] = i < filled ? '#' : '\267';
-    bar[21] = '\273'; // ISO-8859-1 right guillemet
-    bar[22] = '\0';
-    Printf("%-4s %s %6luK / %6luK\n", label, bar, used / 1024, total / 1024);
-}
-
-bool same_name(const char *live, const char *saved) {
-    if (live == nullptr)
-        return false;
-    while (*live && *saved && *live == *saved) {
-        ++live;
-        ++saved;
     }
-    return *live == '\0' && *saved == '\0';
+    const unsigned page = view.rows >= 14 ? view.rows - 10 : 1;
+    if (view.selected < view.scroll) {
+        view.scroll = view.selected;
+    }
+    if (view.selected >= view.scroll + page) {
+        view.scroll = view.selected - page + 1;
+    }
+}
+
+constexpr void memory_bar(Line &line, std::string_view label, ULONG free, ULONG total) {
+    line.field(label, 4);
+    line.character(' ');
+    line.character('\253'); // ISO-8859-1 left guillemet
+    const ULONG used = total > free ? total - free : 0;
+    const unsigned width = line.limit >= 55 ? 20 : 10;
+    const ULONG step = total / width + (total % width != 0);
+    unsigned filled = step ? used / step : 0;
+    if (filled > width) {
+        filled = width;
+    }
+    for (unsigned i = 0; i < width; ++i) {
+        line.character(i < filled ? '#' : '\267');
+    }
+    line.character('\273'); // ISO-8859-1 right guillemet
+    line.character(' ');
+    line.decimal(used / 1024);
+    line.text("K / ");
+    line.decimal(total / 1024);
+    line.character('K');
+}
+
+constexpr bool same_name(const char *live, std::string_view saved) {
+    return live && std::string_view{live} == saved;
 }
 
 bool signal_matching(const List &list, const TaskRow &row) {
     for (const Node *node = list.lh_Head; node->ln_Succ; node = node->ln_Succ) {
         Task *task = reinterpret_cast<Task *>(const_cast<Node *>(node));
         if (reinterpret_cast<ULONG>(task) == row.address && task->tc_Node.ln_Type == row.type &&
-            same_name(task->tc_Node.ln_Name, row.name)) {
+            same_name(task->tc_Node.ln_Name, row.name.data())) {
             Signal(task, SIGBREAKF_CTRL_C);
             return true;
         }
@@ -143,91 +259,315 @@ bool break_selected(const TaskRow &row) {
     Forbid();
     Task *current = SysBase->ThisTask;
     if (reinterpret_cast<ULONG>(current) == row.address && current->tc_Node.ln_Type == row.type &&
-        same_name(current->tc_Node.ln_Name, row.name)) {
+        same_name(current->tc_Node.ln_Name, row.name.data())) {
         Signal(current, SIGBREAKF_CTRL_C);
         sent = true;
-    } else
+    } else {
         sent = signal_matching(SysBase->TaskReady, row) || signal_matching(SysBase->TaskWait, row);
+    }
     Permit();
     return sent;
 }
 
-void render(View &view, LONG number) {
+void render(View &view, Screen &screen, LONG number) {
+    screen.size(view.rows, view.cols);
+    if (view.rows < 14 || view.cols < 40) {
+        Line line(view.cols);
+        line.text("WatchTasks: resize window (40x14 minimum)");
+        screen.line(1, line);
+        Flush(Output());
+        return;
+    }
     prepare(view);
     unsigned running = 0, ready = 0, waiting = 0;
-    for (unsigned i = 0; i < view.snapshot.count; ++i) {
-        const UBYTE state = view.snapshot.rows[i].state;
-        if (state == TS_RUN)
+    for (const TaskRow &row : std::span{view.snapshot.rows}.first(view.snapshot.count)) {
+        const UBYTE state = row.state;
+        if (state == TS_RUN) {
             ++running;
-        else if (state == TS_READY)
+        } else if (state == TS_READY) {
             ++ready;
-        else if (state == TS_WAIT)
+        } else if (state == TS_WAIT) {
             ++waiting;
+        }
     }
-    PutStr("\233H\233J\2330 p\2337m WatchTasks ");
-    Printf(" snapshot %ld  tasks %lu  sort %lc %s %s\2330m\n", number,
-           static_cast<ULONG>(view.snapshot.count), static_cast<LONG>(view.sort),
-           view.paused ? "PAUSED" : "", view.snapshot.truncated ? "TRUNCATED" : "");
-    memory_bar("CHIP", AvailMem(MEMF_CHIP), AvailMem(MEMF_CHIP | MEMF_TOTAL));
-    memory_bar("FAST", AvailMem(MEMF_FAST), AvailMem(MEMF_FAST | MEMF_TOTAL));
-    Printf("RUN %lu  READY %lu  WAIT %lu  CPU unavailable\n", static_cast<ULONG>(running),
-           static_cast<ULONG>(ready), static_cast<ULONG>(waiting));
-    PutStr("-------------------------------------------------------------------------------\n");
+    Line title(view.cols);
+    title.text("WatchTasks  #");
+    title.decimal(static_cast<ULONG>(number));
+    title.text("  tasks ");
+    title.decimal(view.snapshot.count);
+    title.text("  sort ");
+    title.character(view.sort);
+    if (view.paused) {
+        title.text("  PAUSED");
+    }
+    if (view.snapshot.truncated) {
+        title.text("  TRUNCATED");
+    }
+    screen.line(1, title, true);
+    Line chip(view.cols);
+    memory_bar(chip, "CHIP", view.chip_free, view.chip_total);
+    screen.line(2, chip);
+    Line fast(view.cols);
+    memory_bar(fast, "FAST", view.fast_free, view.fast_total);
+    screen.line(3, fast);
+    Line status(view.cols);
+    status.text("RUN ");
+    status.decimal(running);
+    status.text("  READY ");
+    status.decimal(ready);
+    status.text("  WAIT ");
+    status.decimal(waiting);
+    status.text("  CPU unavailable");
+    screen.line(4, status);
+    Line rule(view.cols);
+    for (unsigned i = 0; i < rule.limit; ++i) {
+        rule.character('-');
+    }
+    screen.line(5, rule);
+    Line headings(view.cols);
+    headings.text("  TASK_ID  CLI PRI STATE NAME");
+    if (view.cols >= 66) {
+        headings.text("                 COMMAND");
+    }
+    screen.line(6, headings);
+
+    const unsigned page = view.rows - 10;
     if (view.help) {
-        PutStr("j/k or arrows  select       n/u  page down/up\n"
-               "p/s/c/a        sort by priority/state/CLI/name\n"
-               "/              filter name or command; Enter accepts\n"
-               "b              send Ctrl-C to selected task\n"
-               "Space          pause/resume snapshots\n"
-               "h              close help     q  quit\n");
+        static constexpr std::array help = {
+            "j/k or arrows  select; n/u page down/up",
+            "p/s/c/a  sort priority/state/CLI/name",
+            "/  filter name or command; Enter accepts",
+            "b  send Ctrl-C to selected task",
+            "Space  pause/resume snapshots",
+            "h  close help; q  quit",
+        };
+        for (unsigned i = 0; i < page; ++i) {
+            Line line(view.cols);
+            if (i < help.size()) {
+                line.text(help[i]);
+            }
+            screen.line(7 + i, line);
+        }
     } else {
-        PutStr("  TASK_ID   CLI  PRI STATE NAME               COMMAND\n");
-        const unsigned page = view.rows - 11;
-        for (unsigned line = 0; line < page; ++line) {
-            const unsigned pos = view.scroll + line;
+        for (unsigned i = 0; i < page; ++i) {
+            const unsigned pos = view.scroll + i;
+            Line line(view.cols);
             if (pos >= view.shown) {
-                PutStr("\233K\n");
+                screen.line(7 + i, line);
                 continue;
             }
             const TaskRow &row = view.snapshot.rows[view.order[pos]];
-            char name[21], command[29];
-            safe_clip(name, sizeof name, row.name);
-            safe_clip(command, sizeof command, row.command);
-            if (pos == view.selected)
-                PutStr("\2337m");
-            Printf("%lc %08lx %5ld %4ld %-5s %-20s %-28s", pos == view.selected ? '>' : ' ',
-                   row.address, row.cli, static_cast<LONG>(row.priority),
-                   shelltools::task_state(row.state), name, command);
-            if (pos == view.selected)
-                PutStr("\2330m");
-            PutStr("\233K\n");
+            line.character(pos == view.selected ? '>' : ' ');
+            line.character(' ');
+            line.hex8(row.address);
+            line.character(' ');
+            line.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
+            line.character(' ');
+            line.signed_decimal(row.priority);
+            line.character(' ');
+            line.field(shelltools::task_state(row.state), 5);
+            line.character(' ');
+            line.field(row.name.data(), view.cols >= 66 ? 20 : view.cols - 32);
+            if (view.cols >= 66) {
+                line.character(' ');
+                line.text(row.command.data());
+            }
+            screen.line(7 + i, line, pos == view.selected);
         }
-        if (view.shown) {
-            const TaskRow &row = view.snapshot.rows[view.order[view.selected]];
-            Printf("\233KSELECT %lu/%lu  TYPE %s  TASK %08lx  CLI %ld\n",
-                   static_cast<ULONG>(view.selected + 1), static_cast<ULONG>(view.shown),
-                   row.type == NT_PROCESS ? "PROCESS" : "TASK", row.address, row.cli);
-            Printf("\233KSIGNALS alloc %08lx wait %08lx recv %08lx  STACK %08lx-%08lx\n",
-                   row.signal_alloc, row.signal_wait, row.signal_received, row.stack_lower,
-                   row.stack_upper);
-        } else
-            PutStr("\233KNo matching tasks\n\233K\n");
     }
-    if (view.editing)
-        Printf("\233KFilter: %s_\n", view.filter);
-    else
-        Printf("\233KFilter: %s  %s\n", view.filter, view.message);
-    PutStr("\233Kj/k move  p/s/c/a sort  / filter  b break  h help  Space pause  q quit\233K");
+    Line detail(view.cols);
+    Line signals(view.cols);
+    if (view.shown) {
+        const TaskRow &row = view.snapshot.rows[view.order[view.selected]];
+        detail.text("SELECT ");
+        detail.decimal(view.selected + 1);
+        detail.character('/');
+        detail.decimal(view.shown);
+        detail.text("  ");
+        detail.text(row.type == NT_PROCESS ? "PROCESS" : "TASK");
+        detail.text("  TASK ");
+        detail.hex8(row.address);
+        detail.text("  CLI ");
+        detail.decimal(row.cli > 0 ? static_cast<ULONG>(row.cli) : 0);
+        signals.text("SIGNALS ");
+        signals.hex8(row.signal_alloc);
+        signals.character('/');
+        signals.hex8(row.signal_wait);
+        signals.character('/');
+        signals.hex8(row.signal_received);
+        signals.text("  STACK ");
+        signals.hex8(row.stack_lower);
+        signals.character('-');
+        signals.hex8(row.stack_upper);
+    } else {
+        detail.text("No matching tasks");
+    }
+    screen.line(view.rows - 3, detail);
+    screen.line(view.rows - 2, signals);
+    Line filter(view.cols);
+    filter.text("Filter: ");
+    filter.text(view.filter.data());
+    if (view.editing) {
+        filter.character('_');
+    } else {
+        filter.text("  ");
+        filter.text(view.message);
+    }
+    screen.line(view.rows - 1, filter);
+    Line shortcuts(view.cols);
+    shortcuts.text(
+        view.cols < 80
+            ? "j/k  / filter  b break  h help  q quit"
+            : "j/k move  n/u page  p/s/c/a sort  / filter  b break  h help  Space pause q quit");
+    screen.line(view.rows, shortcuts);
+    Flush(Output());
 }
 
 struct RawConsole {
     BPTR input;
     bool active;
+    unsigned rows = 24;
+    unsigned cols = 80;
+    bool size_known = false;
+    bool size_changed = false;
+    std::array<char, 40> sequence = {};
+    unsigned sequence_length = 0;
+    unsigned escape = 0;
+    std::array<char, 16> keys = {};
+    unsigned head = 0;
+    unsigned tail = 0;
+
     explicit RawConsole(BPTR in) : input(in), active(SetMode(in, 1) != 0) {}
     ~RawConsole() {
         if (active) {
-            PutStr("\2330m\233 p\233J\n");
+            PutStr("\2330m\2330 p\233H\233J");
+            Flush(Output());
             SetMode(input, 0);
+        }
+    }
+
+    void enqueue(char key) {
+        const unsigned next = (tail + 1) % keys.size();
+        if (next != head) {
+            keys[tail] = key;
+            tail = next;
+        }
+    }
+
+    int key() {
+        if (head == tail) {
+            return -1;
+        }
+        const UBYTE value = static_cast<UBYTE>(keys[head]);
+        head = (head + 1) % keys.size();
+        return value;
+    }
+
+    void report_size() {
+        // Amiga console aWBR: CSI 1;1;<rows>;<cols> SP r.
+        if (sequence_length < 9 || sequence[sequence_length - 2] != ' ' ||
+            sequence[sequence_length - 1] != 'r') {
+            return;
+        }
+        std::array<ULONG, 4> value = {};
+        unsigned part = 0;
+        bool digit = false;
+        for (unsigned i = 0; i + 2 < sequence_length; ++i) {
+            const char c = sequence[i];
+            if (c >= '0' && c <= '9') {
+                if (value[part] > 999) {
+                    return;
+                }
+                value[part] = value[part] * 10 + static_cast<ULONG>(c - '0');
+                digit = true;
+            } else if (c == ';' && digit && part < 3) {
+                ++part;
+                digit = false;
+            } else {
+                return;
+            }
+        }
+        if (!digit || part != 3 || value[0] != 1 || value[1] != 1 || value[2] == 0 ||
+            value[3] == 0) {
+            return;
+        }
+        const unsigned height = value[2] > max_rows ? max_rows : value[2];
+        const unsigned width = value[3] > max_cols ? max_cols : value[3];
+        if (!size_known || height != rows || width != cols) {
+            size_changed = true;
+        }
+        rows = height;
+        cols = width;
+        size_known = true;
+    }
+
+    void accept(UBYTE byte) {
+        if (escape == 0) {
+            if (byte == 0x9b) {
+                escape = 2;
+                sequence_length = 0;
+            } else if (byte == 27) {
+                escape = 1;
+            } else {
+                enqueue(static_cast<char>(byte));
+            }
+            return;
+        }
+        if (escape == 1) {
+            escape = 0;
+            if (byte == '[') {
+                escape = 2;
+                sequence_length = 0;
+            } else {
+                enqueue(27);
+                accept(byte);
+            }
+            return;
+        }
+        if (sequence_length + 1 >= sequence.size()) {
+            escape = 0;
+            return;
+        }
+        sequence[sequence_length++] = static_cast<char>(byte);
+        if (byte < 0x40 || byte > 0x7e) {
+            return;
+        }
+        escape = 0;
+        if (sequence_length == 1 && byte == 'A') {
+            enqueue('k');
+        } else if (sequence_length == 1 && byte == 'B') {
+            enqueue('j');
+        } else if (byte == 'r') {
+            report_size();
+        }
+    }
+
+    bool poll(LONG micros) {
+        if (!WaitForChar(input, micros)) {
+            if (escape == 1) {
+                escape = 0;
+                enqueue(27);
+            }
+            return false;
+        }
+        UBYTE byte = 0;
+        if (Read(input, &byte, 1) == 1) {
+            accept(byte);
+            return true;
+        }
+        return false;
+    }
+
+    void request_size() {
+        PutStr("\2330 q");
+        Flush(Output());
+    }
+
+    void detect_size() {
+        request_size();
+        unsigned idle = 0;
+        for (unsigned i = 0; i < 64 && idle < 10 && !size_known; ++i) {
+            idle = poll(20000) ? 0 : idle + 1;
         }
     }
 };
@@ -236,15 +576,13 @@ int watch_snapshots(LONG ticks, LONG count, bool machine);
 
 void handle_key(View &view, char key, bool &done) {
     if (view.editing) {
-        unsigned len = 0;
-        while (view.filter[len])
-            ++len;
-        if (key == '\r' || key == '\n' || key == 27)
+        const auto len = std::string_view{view.filter.data()}.size();
+        if (key == '\r' || key == '\n' || key == 27) {
             view.editing = false;
-        else if ((key == 8 || key == 127) && len)
+        } else if ((key == 8 || key == 127) && len) {
             view.filter[len - 1] = '\0';
-        else if (static_cast<UBYTE>(key) >= 32 && static_cast<UBYTE>(key) < 127 &&
-                 len + 1 < sizeof view.filter) {
+        } else if (static_cast<UBYTE>(key) >= 32 && static_cast<UBYTE>(key) < 127 &&
+                   len + 1 < view.filter.size()) {
             view.filter[len] = key;
             view.filter[len + 1] = '\0';
         }
@@ -252,25 +590,29 @@ void handle_key(View &view, char key, bool &done) {
         view.scroll = 0;
         return;
     }
-    if (key == 'q' || key == 'Q')
+    if (key == 'q' || key == 'Q') {
         done = true;
-    else if (key == 'h' || key == 'H' || key == '?')
+    } else if (key == 'h' || key == 'H' || key == '?') {
         view.help = !view.help;
-    else if (key == ' ')
+    } else if (key == ' ') {
         view.paused = !view.paused;
-    else if (key == '/')
+    } else if (key == '/') {
         view.editing = true;
-    else if (key == 'j') {
-        if (view.selected + 1 < view.shown)
+    } else if (key == 'j') {
+        if (view.selected + 1 < view.shown) {
             ++view.selected;
+        }
     } else if (key == 'k') {
-        if (view.selected)
+        if (view.selected) {
             --view.selected;
-    } else if (key == 'n')
-        view.selected += view.rows - 11;
-    else if (key == 'u')
-        view.selected = view.selected > view.rows - 11 ? view.selected - (view.rows - 11) : 0;
-    else if (key == 'p' || key == 's' || key == 'c' || key == 'a') {
+        }
+    } else if (key == 'n') {
+        view.selected += view.rows >= 14 ? view.rows - 10 : 1;
+    } else if (key == 'u') {
+        view.selected = view.selected > (view.rows >= 14 ? view.rows - 10 : 1)
+                            ? view.selected - (view.rows >= 14 ? view.rows - 10 : 1)
+                            : 0;
+    } else if (key == 'p' || key == 's' || key == 'c' || key == 'a') {
         view.sort = key;
         view.selected = 0;
         view.scroll = 0;
@@ -281,53 +623,58 @@ void handle_key(View &view, char key, bool &done) {
     }
 }
 
-int watch_interactive(LONG ticks, LONG count, unsigned rows) {
+int watch_interactive(LONG ticks, LONG count, unsigned requested_rows, unsigned requested_cols) {
     RawConsole console(Input());
-    if (!console.active)
+    if (!console.active) {
         return watch_snapshots(ticks, count, false);
+    }
+    console.detect_size();
     static View view;
-    view.rows = rows;
+    static Screen screen;
+    view.rows = requested_rows ? requested_rows : console.rows;
+    view.cols = requested_cols ? requested_cols : console.cols;
     LONG number = 0;
     bool done = false;
-    unsigned escape = 0;
     while (!done && (count == 0 || number < count)) {
-        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C)
+        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
             return shelltools::warn;
+        }
+        if (console.size_known) {
+            console.request_size();
+        }
         if (!view.paused || number == 0) {
             shelltools::capture_tasks(view.snapshot);
+            view.chip_free = AvailMem(MEMF_CHIP);
+            view.chip_total = AvailMem(MEMF_CHIP | MEMF_TOTAL);
+            view.fast_free = AvailMem(MEMF_FAST);
+            view.fast_total = AvailMem(MEMF_FAST | MEMF_TOTAL);
             view.truncated |= view.snapshot.truncated;
             ++number;
         }
-        render(view, number);
+        render(view, screen, number);
         for (LONG step = 0; step < ticks && !done; ++step) {
-            if (SetSignal(0, 0) & SIGBREAKF_CTRL_C)
+            if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
                 return shelltools::warn;
-            if (WaitForChar(Input(), 20000)) {
-                char key = 0;
-                if (Read(Input(), &key, 1) != 1)
-                    continue;
+            }
+            if (console.head == console.tail) {
+                console.poll(20000);
+            }
+            if (console.size_changed) {
+                console.size_changed = false;
+                view.rows = requested_rows ? requested_rows : console.rows;
+                view.cols = requested_cols ? requested_cols : console.cols;
+                render(view, screen, number);
+            }
+            int key;
+            while ((key = console.key()) >= 0 && !done) {
                 if (key == 27 && view.editing) {
                     view.editing = false;
-                    render(view, number);
-                    continue;
+                } else {
+                    handle_key(view, static_cast<char>(key), done);
                 }
-                if (key == '\233' || key == 27) {
-                    escape = key == 27 ? 1 : 2;
-                    continue;
+                if (!done) {
+                    render(view, screen, number);
                 }
-                if (escape == 1 && key == '[') {
-                    escape = 2;
-                    continue;
-                }
-                if (escape == 2 && key != 'A' && key != 'B') {
-                    escape = 0;
-                    continue;
-                }
-                if (escape == 2)
-                    key = key == 'A' ? 'k' : 'j';
-                escape = 0;
-                handle_key(view, key, done);
-                render(view, number);
             }
         }
     }
@@ -337,8 +684,9 @@ int watch_interactive(LONG ticks, LONG count, unsigned rows) {
 int watch_snapshots(LONG ticks, LONG count, bool machine) {
     static TaskSnapshot snapshot;
     for (LONG round = 0; count == 0 || round < count; ++round) {
-        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C)
+        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) {
             return shelltools::warn;
+        }
         shelltools::capture_tasks(snapshot);
         if (machine) {
             Printf("{\"snapshot\":%ld,\"chip_free\":%lu,\"fast_free\":%lu}\n", round + 1,
@@ -355,8 +703,9 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
             PutStr(machine ? "{\"truncated\":true}\n" : "TRUNCATED=1\n");
             return shelltools::warn;
         }
-        if (count == 0 || round + 1 < count)
+        if (count == 0 || round + 1 < count) {
             Delay(ticks);
+        }
     }
     return shelltools::ok;
 }
@@ -364,31 +713,37 @@ int watch_snapshots(LONG ticks, LONG count, bool machine) {
 } // namespace
 
 int main() {
-    LONG args[5] = {};
-    RDArgs *rd = ReadArgs("TICKS/N/K,COUNT/N/K,ROWS/N/K,MACHINE/S,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    LONG args[6] = {};
+    RDArgs *rd = ReadArgs("TICKS/N/K,COUNT/N/K,ROWS/N/K,COLS/N/K,MACHINE/S,HELP/S", args, nullptr);
+    if (rd == nullptr) {
         return shelltools::dos_error("WatchTasks");
-    if (args[4]) {
-        shelltools::help("PURPOSE: Live task and memory monitor\n"
-                         "USAGE: WatchTasks [TICKS=<n>] [COUNT=<n>] [ROWS=<n>] [MACHINE]\n"
-                         "DEFAULT: 50 ticks, unlimited, 24 rows\n"
-                         "KEYS: j/k move; p/s/c/a sort; / filter; b break; h help; q quit\n"
-                         "OUTPUT: Interactive ISO-8859-1 UI; MACHINE gives JSON lines\n"
-                         "RC: 0=done 5=break/truncated 10=error\n");
+    }
+    if (args[5]) {
+        shelltools::help(
+            "PURPOSE: Live task and memory monitor\n"
+            "USAGE: WatchTasks [TICKS=<n>] [COUNT=<n>] [ROWS=<n>] [COLS=<n>] [MACHINE]\n"
+            "DEFAULT: 50 ticks, unlimited, auto console size\n"
+            "KEYS: j/k move; p/s/c/a sort; / filter; b break; h help; q quit\n"
+            "OUTPUT: Interactive ISO-8859-1 UI; MACHINE gives JSON lines\n"
+            "RC: 0=done 5=break/truncated 10=error\n");
         FreeArgs(rd);
         return shelltools::ok;
     }
     const LONG ticks = args[0] ? *reinterpret_cast<LONG *>(args[0]) : 50;
     const LONG count = args[1] ? *reinterpret_cast<LONG *>(args[1]) : 0;
-    const LONG rows = args[2] ? *reinterpret_cast<LONG *>(args[2]) : 24;
-    const bool machine = args[3] != 0;
-    if (ticks <= 0 || count < 0 || rows < 14 || rows > 100) {
-        PutStr("WatchTasks: TICKS>0 COUNT>=0 ROWS=14..100\n");
+    const LONG rows = args[2] ? *reinterpret_cast<LONG *>(args[2]) : 0;
+    const LONG cols = args[3] ? *reinterpret_cast<LONG *>(args[3]) : 0;
+    const bool machine = args[4] != 0;
+    if (ticks <= 0 || count < 0 || (rows && (rows < 14 || rows > 100)) ||
+        (cols && (cols < 40 || cols > 160))) {
+        PutStr("WatchTasks: TICKS>0 COUNT>=0 ROWS=14..100 COLS=40..160\n");
         FreeArgs(rd);
         return shelltools::error;
     }
     FreeArgs(rd);
-    if (!machine && IsInteractive(Input()) && IsInteractive(Output()))
-        return watch_interactive(ticks, count, static_cast<unsigned>(rows));
+    if (!machine && IsInteractive(Input()) && IsInteractive(Output())) {
+        return watch_interactive(ticks, count, static_cast<unsigned>(rows),
+                                 static_cast<unsigned>(cols));
+    }
     return watch_snapshots(ticks, count, machine);
 }

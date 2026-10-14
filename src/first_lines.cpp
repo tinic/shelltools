@@ -3,8 +3,9 @@
 int main() {
     LONG args[3] = {};
     RDArgs *rd = ReadArgs("FILE,LINES/N/K,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("FirstLines");
+    }
     if (args[2]) {
         shelltools::help("PURPOSE: Print first lines of a file or input\n"
                          "USAGE: FirstLines [FILE] [LINES=<n>]\n"
@@ -35,12 +36,14 @@ int main() {
             rc = shelltools::dos_error("FirstLines");
             break;
         }
-        if (count == 0)
+        if (count == 0) {
             break;
+        }
         LONG n = 0;
         while (n < count && lines < limit) {
-            if (buffer[n] == '\n')
+            if (buffer[n] == '\n') {
                 ++lines;
+            }
             ++n;
         }
         if (!shelltools::write_all(Output(), buffer, n)) {
@@ -48,8 +51,9 @@ int main() {
             break;
         }
     }
-    if (own_file)
+    if (own_file) {
         Close(file);
+    }
     FreeArgs(rd);
     return rc;
 }

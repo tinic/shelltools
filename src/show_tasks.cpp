@@ -7,8 +7,9 @@
 int main() {
     LONG args[2] = {};
     RDArgs *rd = ReadArgs("MACHINE/S,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("ShowTasks");
+    }
     if (args[1]) {
         shelltools::help("PURPOSE: List Exec tasks and AmigaDOS processes\n"
                          "USAGE: ShowTasks [MACHINE]\n"
@@ -23,8 +24,9 @@ int main() {
 
     static shelltools::TaskSnapshot snapshot;
     shelltools::capture_tasks(snapshot);
-    if (!machine)
+    if (!machine) {
         shelltools::print_task_header();
+    }
     for (unsigned i = 0; i < snapshot.count; ++i) {
         shelltools::print_task(snapshot.rows[i], machine, 0);
     }

@@ -6,8 +6,9 @@
 int main() {
     LONG args[1] = {};
     RDArgs *rd = ReadArgs("HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("RebootSync");
+    }
     if (args[0]) {
         shelltools::help("PURPOSE: Reboot after partition sync\n"
                          "USAGE: RebootSync\n"

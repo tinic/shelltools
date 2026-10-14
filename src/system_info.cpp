@@ -33,8 +33,9 @@ constexpr Field fields[] = {{"system", 0},   {"cpu", 1},   {"fpu", 2},     {"mmu
 int main() {
     LONG args[2] = {};
     RDArgs *rd = ReadArgs("MACHINE/S,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("SystemInfo");
+    }
     if (args[1]) {
         shelltools::help("PURPOSE: Identify AmigaOS system and hardware\n"
                          "USAGE: SystemInfo [MACHINE]\n"
@@ -61,10 +62,11 @@ int main() {
                 PutStr(field.key);
                 PutStr("\":");
                 const char *value = id_hardware(identify, field.id);
-                if (value)
+                if (value) {
                     shelltools::write_json_string(Output(), value);
-                else
+                } else {
                     PutStr("null");
+                }
             }
         }
         PutStr("}\n");
@@ -76,12 +78,14 @@ int main() {
         if (identify) {
             for (const Field &field : fields) {
                 const char *value = id_hardware(identify, field.id);
-                if (value)
+                if (value) {
                     Printf("%s=%s\n", field.key, value);
+                }
             }
         }
     }
-    if (identify)
+    if (identify) {
         CloseLibrary(identify);
+    }
     return shelltools::ok;
 }

@@ -3,8 +3,9 @@
 int main() {
     LONG args[3] = {};
     RDArgs *rd = ReadArgs("PATH,MACHINE/S,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("DiskFree");
+    }
     if (args[2]) {
         shelltools::help("PURPOSE: Show filesystem capacity for a path\n"
                          "USAGE: DiskFree [PATH] [MACHINE]\n"

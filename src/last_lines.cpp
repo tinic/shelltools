@@ -3,8 +3,9 @@
 int main() {
     LONG args[3] = {};
     RDArgs *rd = ReadArgs("FILE,LINES/N/K,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("LastLines");
+    }
     if (args[2]) {
         shelltools::help("PURPOSE: Print last lines of a seekable file\n"
                          "USAGE: LastLines FILE [LINES=<n>]\n"
@@ -33,8 +34,9 @@ int main() {
     int rc = shelltools::ok;
     const LONG seek_rc = Seek(file, 0, OFFSET_END);
     const LONG size = seek_rc < 0 ? -1 : Seek(file, 0, OFFSET_CURRENT);
-    if (size < 0)
+    if (size < 0) {
         rc = shelltools::dos_error("LastLines");
+    }
     static char buffer[4096];
     LONG start = 0;
     LONG remaining = size;
@@ -51,8 +53,9 @@ int main() {
         }
         for (LONG i = count; i > 0; --i) {
             const LONG absolute = offset + i - 1;
-            if (buffer[i - 1] != '\n' || absolute == size - 1)
+            if (buffer[i - 1] != '\n' || absolute == size - 1) {
                 continue;
+            }
             if (++lines == limit) {
                 start = absolute + 1;
                 found = true;
@@ -72,8 +75,9 @@ int main() {
                     break;
                 }
             }
-            if (count < 0)
+            if (count < 0) {
                 rc = shelltools::dos_error("LastLines");
+            }
         }
     }
     Close(file);

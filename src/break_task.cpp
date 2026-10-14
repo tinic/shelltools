@@ -4,58 +4,58 @@
 #include <exec/execbase.h>
 #include <proto/exec.h>
 
+#include <algorithm>
+#include <span>
+#include <string_view>
+
 namespace {
 
-bool same_command(const Process *process, const char *expected) {
-    if (process->pr_CLI == 0)
+bool same_command(const Process *process, std::string_view expected) {
+    if (process->pr_CLI == 0) {
         return false;
+    }
     const auto *cli = static_cast<const CommandLineInterface *>(BADDR(process->pr_CLI));
-    if (cli == nullptr || cli->cli_CommandName == 0)
+    if (cli == nullptr || cli->cli_CommandName == 0) {
         return false;
+    }
     const auto *bstr = static_cast<const UBYTE *>(BADDR(cli->cli_CommandName));
-    if (bstr == nullptr)
+    if (bstr == nullptr) {
         return false;
-    unsigned i = 0;
-    const unsigned length = bstr[0];
-    while (i < length && expected[i] != '\0') {
-        if (static_cast<UBYTE>(expected[i]) != bstr[i + 1])
-            return false;
-        ++i;
     }
-    return i == length && expected[i] == '\0';
+    const auto actual = std::span{bstr + 1, static_cast<unsigned>(bstr[0])};
+    return std::ranges::equal(actual, expected,
+                              [](UBYTE a, char b) { return a == static_cast<UBYTE>(b); });
 }
 
-bool same_name(const Task *task, const char *expected) {
+constexpr bool same_name(const Task *task, std::string_view expected) {
     const char *actual = task->tc_Node.ln_Name;
-    if (actual == nullptr)
-        return false;
-    while (*actual && *expected && *actual == *expected) {
-        ++actual;
-        ++expected;
-    }
-    return *actual == '\0' && *expected == '\0';
+    return actual != nullptr && std::string_view{actual} == expected;
 }
 
-bool parse_task_id(const char *text, ULONG &address) {
-    if (text[0] == '$')
-        ++text;
-    else if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
-        text += 2;
-    if (*text == '\0')
+constexpr bool parse_task_id(std::string_view text, ULONG &address) {
+    if (text.starts_with('$')) {
+        text.remove_prefix(1);
+    } else if (text.starts_with("0x") || text.starts_with("0X")) {
+        text.remove_prefix(2);
+    }
+    if (text.empty()) {
         return false;
+    }
     address = 0;
-    for (; *text; ++text) {
+    for (const char c : text) {
         unsigned digit;
-        if (*text >= '0' && *text <= '9')
-            digit = *text - '0';
-        else if (*text >= 'a' && *text <= 'f')
-            digit = *text - 'a' + 10;
-        else if (*text >= 'A' && *text <= 'F')
-            digit = *text - 'A' + 10;
-        else
+        if (c >= '0' && c <= '9') {
+            digit = c - '0';
+        } else if (c >= 'a' && c <= 'f') {
+            digit = c - 'a' + 10;
+        } else if (c >= 'A' && c <= 'F') {
+            digit = c - 'A' + 10;
+        } else {
             return false;
-        if (address > 0x0fffffffUL)
+        }
+        if (address > 0x0fffffffUL) {
             return false;
+        }
         address = (address << 4) | digit;
     }
     return address != 0;
@@ -77,8 +77,9 @@ bool signal_matching(const List &list, ULONG address, const char *name) {
 int main() {
     LONG args[5] = {};
     RDArgs *rd = ReadArgs("CLI/N,COMMAND,TASK,NAME,HELP/S", args, nullptr);
-    if (rd == nullptr)
+    if (rd == nullptr) {
         return shelltools::dos_error("BreakTask");
+    }
     if (args[4]) {
         shelltools::help("PURPOSE: Send Ctrl-C break to an Exec task\n"
                          "USAGE: BreakTask CLI=<number> COMMAND=<exact name>\n"

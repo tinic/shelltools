@@ -3,6 +3,9 @@
 #include <dos/dos.h>
 #include <proto/dos.h>
 
+#include <array>
+#include <string_view>
+
 namespace shelltools {
 
 inline constexpr int ok = 0;
@@ -14,24 +17,26 @@ inline bool write_all(BPTR out, const char *data, LONG count) {
         // FWrite shares DOS's buffered output path with Printf and PutStr.
         // Write bypasses it and can reorder fragments of a JSON record.
         const LONG wrote = FWrite(out, data, 1, static_cast<ULONG>(count));
-        if (wrote <= 0)
+        if (wrote <= 0) {
             return false;
+        }
         data += wrote;
         count -= wrote;
     }
     return true;
 }
 
-inline bool write_json_string(BPTR out, const char *input) {
-    static constexpr char hex[] = "0123456789abcdef";
-    char buffer[128];
+inline bool write_json_string(BPTR out, std::string_view input) {
+    static constexpr std::string_view hex = "0123456789abcdef";
+    std::array<char, 128> buffer;
     unsigned n = 0;
     buffer[n++] = '"';
-    for (unsigned i = 0; input[i] != '\0'; ++i) {
-        const UBYTE c = static_cast<UBYTE>(input[i]);
-        if (n + 6 >= sizeof buffer) {
-            if (!write_all(out, buffer, static_cast<LONG>(n)))
+    for (const char character : input) {
+        const UBYTE c = static_cast<UBYTE>(character);
+        if (n + 6 >= buffer.size()) {
+            if (!write_all(out, buffer.data(), static_cast<LONG>(n))) {
                 return false;
+            }
             n = 0;
         }
         if (c == '"' || c == '\\') {
@@ -49,7 +54,7 @@ inline bool write_json_string(BPTR out, const char *input) {
         }
     }
     buffer[n++] = '"';
-    return write_all(out, buffer, static_cast<LONG>(n));
+    return write_all(out, buffer.data(), static_cast<LONG>(n));
 }
 
 inline int dos_error(const char *command) {

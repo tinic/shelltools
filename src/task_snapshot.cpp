@@ -4,36 +4,45 @@
 #include <exec/execbase.h>
 #include <proto/exec.h>
 
+#include <algorithm>
+#include <span>
+
 namespace shelltools {
 
 namespace {
 
-void copy_name(char *dest, unsigned capacity, const char *src) {
-    unsigned i = 0;
-    if (src != nullptr) {
-        while (i + 1 < capacity && src[i] != '\0') {
-            dest[i] = src[i];
-            ++i;
-        }
+void copy_name(std::span<char> dest, const char *src) {
+    if (src == nullptr) {
+        dest.front() = '\0';
+        return;
     }
-    dest[i] = '\0';
+    unsigned length = 0;
+    for (const char c : std::span{src, dest.size() - 1}) {
+        if (c == '\0') {
+            break;
+        }
+        dest[length++] = c;
+    }
+    dest[length] = '\0';
 }
 
-void copy_command(char *dest, unsigned capacity, const Process *process) {
-    dest[0] = '\0';
-    if (process->pr_CLI == 0)
+void copy_command(std::span<char> dest, const Process *process) {
+    dest.front() = '\0';
+    if (process->pr_CLI == 0) {
         return;
+    }
     const auto *cli = static_cast<const CommandLineInterface *>(BADDR(process->pr_CLI));
-    if (cli == nullptr || cli->cli_CommandName == 0)
+    if (cli == nullptr || cli->cli_CommandName == 0) {
         return;
+    }
     const auto *bstr = static_cast<const UBYTE *>(BADDR(cli->cli_CommandName));
-    if (bstr == nullptr)
+    if (bstr == nullptr) {
         return;
-    unsigned length = bstr[0];
-    if (length >= capacity)
-        length = capacity - 1;
-    for (unsigned i = 0; i < length; ++i)
-        dest[i] = static_cast<char>(bstr[i + 1]);
+    }
+    const auto length = std::min<unsigned>(bstr[0], dest.size() - 1);
+    const auto source = std::span{bstr + 1, length};
+    std::ranges::transform(source, dest.begin(),
+                           [](UBYTE value) { return static_cast<char>(value); });
     dest[length] = '\0';
 }
 
@@ -57,16 +66,16 @@ void capture_one(TaskSnapshot &snapshot, const Task *task) {
     row.cli = 0;
     row.process_stack_size = 0;
     row.process_flags = 0;
-    row.command[0] = '\0';
-    row.arguments[0] = '\0';
-    copy_name(row.name, sizeof row.name, task->tc_Node.ln_Name);
+    row.command.front() = '\0';
+    row.arguments.front() = '\0';
+    copy_name(row.name, task->tc_Node.ln_Name);
     if (task->tc_Node.ln_Type == NT_PROCESS) {
         const auto *process = reinterpret_cast<const Process *>(task);
         row.cli = process->pr_TaskNum;
         row.process_stack_size = process->pr_StackSize;
         row.process_flags = process->pr_Flags;
-        copy_command(row.command, sizeof row.command, process);
-        copy_name(row.arguments, sizeof row.arguments, process->pr_Arguments);
+        copy_command(row.command, process);
+        copy_name(row.arguments, process->pr_Arguments);
     }
 }
 
