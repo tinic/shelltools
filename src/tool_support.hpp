@@ -11,7 +11,9 @@ inline constexpr int error = 10;
 
 inline bool write_all(BPTR out, const char *data, LONG count) {
     while (count > 0) {
-        const LONG wrote = Write(out, const_cast<char *>(data), count);
+        // FWrite shares DOS's buffered output path with Printf and PutStr.
+        // Write bypasses it and can reorder fragments of a JSON record.
+        const LONG wrote = FWrite(out, data, 1, static_cast<ULONG>(count));
         if (wrote <= 0)
             return false;
         data += wrote;
