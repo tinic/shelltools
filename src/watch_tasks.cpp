@@ -18,6 +18,7 @@
 
 namespace {
 
+using shelltools::copy_command;
 using shelltools::TaskRow;
 using shelltools::TaskSnapshot;
 
@@ -879,11 +880,26 @@ constexpr bool same_name(const char *live, std::string_view saved) {
     return live && std::string_view{live} == saved;
 }
 
+// Called under Forbid(): the prompt's CLI number and command must still hold.
+bool live_break_target(const Task *task, const TaskRow &row) {
+    if (reinterpret_cast<ULONG>(task) != row.address || task->tc_Node.ln_Type != row.type ||
+        !same_name(task->tc_Node.ln_Name, row.name.data())) {
+        return false;
+    }
+    if (task->tc_Node.ln_Type != NT_PROCESS) {
+        return true;
+    }
+    const auto *process = reinterpret_cast<const Process *>(task);
+    decltype(row.command) command{};
+    copy_command(command, process);
+    return process->pr_TaskNum == row.cli &&
+           std::string_view{command.data()} == std::string_view{row.command.data()};
+}
+
 bool signal_matching(const List &list, const TaskRow &row) {
     for (const Node *node = list.lh_Head; node->ln_Succ; node = node->ln_Succ) {
         Task *task = reinterpret_cast<Task *>(const_cast<Node *>(node));
-        if (reinterpret_cast<ULONG>(task) == row.address && task->tc_Node.ln_Type == row.type &&
-            same_name(task->tc_Node.ln_Name, row.name.data())) {
+        if (live_break_target(task, row)) {
             Signal(task, SIGBREAKF_CTRL_C);
             return true;
         }
@@ -895,8 +911,7 @@ bool break_selected(const TaskRow &row) {
     bool sent = false;
     Forbid();
     Task *current = SysBase->ThisTask;
-    if (reinterpret_cast<ULONG>(current) == row.address && current->tc_Node.ln_Type == row.type &&
-        same_name(current->tc_Node.ln_Name, row.name.data())) {
+    if (live_break_target(current, row)) {
         Signal(current, SIGBREAKF_CTRL_C);
         sent = true;
     } else {
