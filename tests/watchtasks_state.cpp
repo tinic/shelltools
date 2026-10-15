@@ -51,12 +51,21 @@ void test_signal(Task *task, ULONG mask) {
 int main() {
     ExecBase *saved = SysBase;
     static ExecBase exec = {};
-    static Task first = {};
-    static Task second = {};
+    static Process first_process = {};
+    static Process second_process = {};
+    Task &first = first_process.pr_Task;
+    Task &second = second_process.pr_Task;
     first.tc_Node.ln_Type = NT_PROCESS;
     first.tc_Node.ln_Name = const_cast<char *>("first");
     second.tc_Node.ln_Type = NT_PROCESS;
     second.tc_Node.ln_Name = const_cast<char *>("second");
+    // BCPL strings and the CLI must be longword aligned for MKBADDR.
+    alignas(4) static UBYTE first_command[] = "\x0d" "first-command";
+    alignas(4) static UBYTE other_command[] = "\x06" "Format";
+    alignas(4) static CommandLineInterface first_cli = {};
+    first_cli.cli_CommandName = MKBADDR(first_command);
+    first_process.pr_CLI = MKBADDR(&first_cli);
+    first_process.pr_TaskNum = 3;
     exec.ThisTask = &first;
     exec.TaskReady.lh_Head = reinterpret_cast<Node *>(&exec.TaskReady.lh_Tail);
     exec.TaskWait.lh_Head = reinterpret_cast<Node *>(&exec.TaskWait.lh_Tail);
@@ -69,6 +78,7 @@ int main() {
     a.type = NT_PROCESS;
     std::memcpy(a.name.data(), "first", 6);
     std::memcpy(a.command.data(), "first-command", 14);
+    a.cli = 3;
     b.address = reinterpret_cast<ULONG>(&second);
     b.type = NT_PROCESS;
     std::memcpy(b.name.data(), "second", 7);
@@ -132,6 +142,19 @@ int main() {
     CHECK(signal_calls == 1);
     first.tc_Node.ln_Name = const_cast<char *>("first");
 
+    // A paused view does not refresh: Y re-checks the command and CLI number live.
+    handle_key(view, 'b', done);
+    first_cli.cli_CommandName = MKBADDR(other_command);
+    handle_key(view, 'Y', done);
+    CHECK(signal_calls == 1 && !view.confirming_break);
+    CHECK(std::string_view{view.message} == "Task changed or missing");
+    first_cli.cli_CommandName = MKBADDR(first_command);
+    handle_key(view, 'b', done);
+    first_process.pr_TaskNum = 4;
+    handle_key(view, 'Y', done);
+    CHECK(signal_calls == 1 && !view.confirming_break);
+    first_process.pr_TaskNum = 3;
+
     // Once absent in a refreshed capture, even a reused identity stays refused.
     handle_key(view, 'b', done);
     view.snapshot.count = 1;
@@ -193,6 +216,6 @@ int main() {
     CHECK(!view.confirming_break && signal_calls == 1);
     SysBase = saved;
     std::puts("PASS: stable selection, explicit confirmation, cancellation, pinned target, "
-              "missing/renamed task, 40x14 prompt");
+              "missing/renamed task, live command/CLI change, 40x14 prompt");
     return 0;
 }

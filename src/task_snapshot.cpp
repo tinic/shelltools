@@ -26,26 +26,6 @@ void copy_name(std::span<char> dest, const char *src) {
     dest[length] = '\0';
 }
 
-void copy_command(std::span<char> dest, const Process *process) {
-    dest.front() = '\0';
-    if (process->pr_CLI == 0) {
-        return;
-    }
-    const auto *cli = static_cast<const CommandLineInterface *>(BADDR(process->pr_CLI));
-    if (cli == nullptr || cli->cli_CommandName == 0) {
-        return;
-    }
-    const auto *bstr = static_cast<const UBYTE *>(BADDR(cli->cli_CommandName));
-    if (bstr == nullptr) {
-        return;
-    }
-    const auto length = std::min<unsigned>(bstr[0], dest.size() - 1);
-    const auto source = std::span{bstr + 1, length};
-    std::ranges::transform(source, dest.begin(),
-                           [](UBYTE value) { return static_cast<char>(value); });
-    dest[length] = '\0';
-}
-
 void capture_one(TaskSnapshot &snapshot, const Task *task) {
     if (snapshot.count == TaskSnapshot::capacity) {
         snapshot.truncated = true;
@@ -86,6 +66,26 @@ void capture_list(TaskSnapshot &snapshot, const List &list) {
 }
 
 } // namespace
+
+void copy_command(std::span<char> dest, const Process *process) {
+    dest.front() = '\0';
+    if (process->pr_CLI == 0) {
+        return;
+    }
+    const auto *cli = static_cast<const CommandLineInterface *>(BADDR(process->pr_CLI));
+    if (cli == nullptr || cli->cli_CommandName == 0) {
+        return;
+    }
+    const auto *bstr = static_cast<const UBYTE *>(BADDR(cli->cli_CommandName));
+    if (bstr == nullptr) {
+        return;
+    }
+    const auto length = std::min<unsigned>(bstr[0], dest.size() - 1);
+    const auto source = std::span{bstr + 1, length};
+    std::ranges::transform(source, dest.begin(),
+                           [](UBYTE value) { return static_cast<char>(value); });
+    dest[length] = '\0';
+}
 
 void capture_tasks(TaskSnapshot &snapshot) {
     snapshot.count = 0;

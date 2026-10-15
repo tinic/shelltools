@@ -3,6 +3,9 @@
 #include <exec/types.h>
 
 #include <array>
+#include <span>
+
+struct Process;
 
 namespace shelltools {
 
@@ -41,6 +44,7 @@ struct TaskSnapshot {
 };
 
 void capture_tasks(TaskSnapshot &snapshot);
+void copy_command(std::span<char> dest, const Process *process);
 const char *task_state(UBYTE state);
 
 } // namespace shelltools
